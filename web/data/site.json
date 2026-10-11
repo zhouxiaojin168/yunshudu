@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-11T11:40:41.332Z",
+  "generatedAt": "2026-10-11T14:51:26.486Z",
   "source": "http://127.0.0.1:3300",
   "site": {
     "name": "yunshudu",
@@ -85,6 +85,20 @@
       "priority": 5,
       "weight": 10,
       "auto_ban": 1,
+      "is_multi_key": false,
+      "key_count": 1
+    },
+    {
+      "id": 11,
+      "name": "池②-Google账号池(flow-pool)",
+      "base_url": "http://127.0.0.1:9930",
+      "models": [
+        "gemini-nano-banana-2.1-image"
+      ],
+      "status": 1,
+      "priority": 100,
+      "weight": 10,
+      "auto_ban": 0,
       "is_multi_key": false,
       "key_count": 1
     }
