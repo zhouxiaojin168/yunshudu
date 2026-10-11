@@ -16,6 +16,13 @@ Add-Type -Namespace K -Name In -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
 [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
 [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
+[DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr h);
+[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
+[DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);
+[DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool alt);
+[DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 '@
 function Title([IntPtr]$h) { $sb = New-Object System.Text.StringBuilder 512; [void][K.In]::GetWindowTextW($h, $sb, 512); return $sb.ToString() }
 $EXT = 0x0001; $UP = 0x0002
