@@ -1,19 +1,23 @@
 /**
- * edge-proxy.js -- 边缘反代：80 -> new-api(3000)
+ * edge-proxy.js -- 边缘反代（默认 80,8080）-> new-api(3000)
  *
  *   为什么需要它：
- *     1) 给下游一个不带端口号的短 base url，例如 http://<host>/v1/chat/completions
+ *     1) 给下游一个不带端口的短 base url（有域名/Tunnel 时尤其重要）
  *     2) new-api 自己继续跑在 3000 上，老地址不断（向后兼容）
- *     3) 以后要挂域名 / TLS / 统一限流，都在这层加，不动核心服务
+ *     3) 统一访问日志 / 以后挂 TLS / 限流，都在这层加，不动核心服务
+ *
+ *   ⚠ 机房实测：本机（IDC 114.66.16.225）在 **公网 80 端口有透明截持**
+ *     （Apache 301 -> http://183.136.132.24），流量到不了本进程。
+ *     所以这里支持**多端口**：80 留着（备案/解封后自动可用），8080 立刻可用。
  *
  *   环境变量：
- *     EDGE_PORT        监听端口，默认 80
+ *     EDGE_PORT        监听端口，支持逗号分隔，默认 80,8080
  *     EDGE_HOST        监听地址，默认 0.0.0.0
  *     EDGE_UPSTREAM    上游地址，默认 http://127.0.0.1:3000
  *     EDGE_LOG_DIR     日志目录，默认 <repo>/runtime/logs
  *     EDGE_ACCESS_LOG  '1' 时把每条请求也写日志（默认只记错误）
  *
- *   健康检查：GET /__edge/health  ->  { ok, upstream, uptimeSec, requests, errors }
+ *   健康检查：GET /__edge/health  ->  { ok, ports, upstream, uptimeSec, requests, errors }
  *
  *   零依赖，只用 Node 内置模块。
  */
@@ -25,7 +29,8 @@ const path = require('path');
 const NL = String.fromCharCode(10);
 const BOM = String.fromCharCode(0xFEFF);
 
-const PORT = Number(process.env.EDGE_PORT || 80);
+const PORT_SPEC = String(process.env.EDGE_PORT || '80,8080');
+const PORTS = PORT_SPEC.split(',').map((s) => Number(String(s).trim())).filter((n) => n > 0);
 const HOST = process.env.EDGE_HOST || '0.0.0.0';
 const UPSTREAM = process.env.EDGE_UPSTREAM || 'http://127.0.0.1:3000';
 const US = new URL(UPSTREAM);
@@ -40,6 +45,7 @@ const T0 = Date.now();
 let reqCount = 0;
 let errCount = 0;
 let bomDone = false;
+const listening = [];
 
 function log(line) {
   const s = '[' + new Date().toISOString() + '] ' + line;
@@ -60,12 +66,14 @@ function clientIp(req) {
   return (req.socket && req.socket.remoteAddress) || '';
 }
 
-function healthBody() {
+function healthBody(port) {
   return JSON.stringify({
     ok: true,
     service: 'edge-proxy',
     pid: process.pid,
-    port: PORT,
+    thisPort: port,
+    ports: PORTS,
+    listening: listening,
     host: HOST,
     upstream: UPSTREAM,
     uptimeSec: Math.round((Date.now() - T0) / 1000),
@@ -76,10 +84,12 @@ function healthBody() {
   });
 }
 
-const server = http.createServer((req, res) => {
-  if (req.url === '/__edge/health' || req.url === '/__edge/health/') {
+function handle(req, res) {
+  const isHealth = (req.url === '/__edge/health' || req.url === '/__edge/health/');
+  if (isHealth) {
+    const self = (req.socket && req.socket.localPort) || 0;
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(healthBody());
+    res.end(healthBody(self));
     return;
   }
 
@@ -122,19 +132,30 @@ const server = http.createServer((req, res) => {
   req.pipe(up);
 
   if (ACCESS_LOG) log('REQ ' + String(req.method) + ' ' + String(req.url) + ' <- ' + clientIp(req));
+}
+
+function onClientError(err, sock) { try { sock.destroy(); } catch (e) {} }
+
+const servers = [];
+if (PORTS.length === 0) { log('NO_VALID_PORT from spec ' + PORT_SPEC); process.exit(3); }
+
+PORTS.forEach((pt) => {
+  const srv = http.createServer(handle);
+  srv.on('clientError', onClientError);
+  srv.on('error', (e) => {
+    log('LISTEN_ERROR port=' + pt + ' :: ' + String(e && e.message));
+  });
+  srv.listen(pt, HOST, () => {
+    listening.push(pt);
+    log('edge-proxy listening on ' + HOST + ':' + pt + ' -> ' + UPSTREAM + ' (node ' + process.version + ', pid ' + process.pid + ')');
+  });
+  servers.push(srv);
 });
 
-server.on('clientError', (err, sock) => { try { sock.destroy(); } catch (e) {} });
-
-server.on('error', (e) => {
-  log('LISTEN_ERROR ' + String(e && e.message));
-  process.exit(3);
-});
-
-server.listen(PORT, HOST, () => {
-  log('edge-proxy listening on ' + HOST + ':' + PORT + ' -> ' + UPSTREAM + ' (node ' + process.version + ', pid ' + process.pid + ')');
-});
-
-function bye(sig) { log('got ' + sig + ' -> exit'); try { server.close(); } catch (e) {} process.exit(0); }
+function bye(sig) {
+  log('got ' + sig + ' -> exit');
+  servers.forEach((s) => { try { s.close(); } catch (e) {} });
+  setTimeout(() => process.exit(0), 200);
+}
 process.on('SIGTERM', () => bye('SIGTERM'));
 process.on('SIGINT', () => bye('SIGINT'));
