@@ -30,7 +30,7 @@
  *
  * 环境变量：
  *   H3P_PORT=9940  H3P_UPSTREAM=http://127.0.0.1:9941  H3P_ADMIN_KEY=sk-hl-admin
- *   H3P_CHECKIN_MS=20000  H3P_DAILY_CREDITS=300  H3P_ACCOUNT_CAP=1200
+ *   H3P_CHECKIN_MS=20000  H3P_CHECKIN_BACKOFF_MAX_MS=86400000  H3P_DAILY_CREDITS=300  H3P_ACCOUNT_CAP=1200
  *   H3P_RESERVE_FACTOR=2  H3P_MAX_RETRIES=3  H3P_MAX_INFLIGHT=20  H3P_CREDIT_PER_CLIP=1000
  */
 'use strict';
@@ -45,6 +45,7 @@ const PORT = Number(process.env.H3P_PORT || 9940);
 const UPSTREAM = (process.env.H3P_UPSTREAM || 'http://127.0.0.1:9941').replace(/\/+$/, '');
 const ADMIN_KEY = process.env.H3P_ADMIN_KEY || 'sk-hl-admin';
 const CHECKIN_MS = Number(process.env.H3P_CHECKIN_MS || 20000);
+const CHECKIN_BACKOFF_MAX_MS = Number(process.env.H3P_CHECKIN_BACKOFF_MAX_MS || 86400000); /* 无收益/失败时退避上限，默认 24h */
 const DAILY_CREDITS = Number(process.env.H3P_DAILY_CREDITS || 300);
 const ACCOUNT_CAP = Number(process.env.H3P_ACCOUNT_CAP || 1200);
 const RESERVE_FACTOR = Number(process.env.H3P_RESERVE_FACTOR || 2);
@@ -322,28 +323,59 @@ async function runPoolTask(opts) {
     message: 'upstream account balance exhausted (已换号重试 ' + MAX_RETRIES + ' 次仍失败)', detail: { attempts: tried.length, last_error: lastErr } };
 }
 
-/* ------------------------- 签到补分 ------------------------- */
+/* ------------------------- 签到补分（带退避） ------------------------- */
+/* 为什么要有退避：闸门原来只看 last_checkin_at，而它**只在 200 且 credits_after 有限时才更新**。
+   于是上游一旦返回非 200（429/500/风控），闸门永远放行 -> 按扫描周期(5s)疯狂重试，比 60s 严重 12 倍。
+   现在：无论成败都记「本次尝试时间」；收益>0 归零，收益=0 或失败则退避翻倍（CHECKIN_MS * 2^n，封顶 H3P_CHECKIN_BACKOFF_MAX_MS 默认 24h）。*/
+const checkinState = new Map(); /* id -> { lastAttemptAt, noGain } */
+function checkinWaitMs(id) {
+  const s = checkinState.get(id);
+  if (!s || !s.noGain) return CHECKIN_MS;
+  return Math.min(CHECKIN_MS * Math.pow(2, s.noGain), CHECKIN_BACKOFF_MAX_MS);
+}
+function checkinDue(a, force) {
+  if (force) return true;
+  const s = checkinState.get(a.id);
+  const last = Math.max(Number(a.last_checkin_at || 0), (s && s.lastAttemptAt) || 0);
+  return now() - last >= checkinWaitMs(a.id);
+}
+function checkinMark(id, gained) {
+  const s = checkinState.get(id) || { lastAttemptAt: 0, noGain: 0 };
+  s.lastAttemptAt = now();
+  s.noGain = (gained > 0) ? 0 : (s.noGain + 1);
+  checkinState.set(id, s);
+  return s;
+}
+
 async function checkinTick(force) {
   for (const a of listAccounts()) {
     if (!a.healthy) continue;
-    if (!force && now() - Number(a.last_checkin_at || 0) < CHECKIN_MS) continue;
+    if (!checkinDue(a, force)) continue;
     try {
       const r = await upstream('checkin', '/official/v2/checkin', { token: a.token });
       if (r.status === 200) {
         const after = Number(r.g.credits_after);
         const before = Number(r.g.credits_before);
         if (isFinite(after)) {
+          const gained = isFinite(before) ? (after - before) : (after - Number(a.credits || 0));
           db.prepare('UPDATE accounts SET credits=?, last_checkin_at=?, checkin_count=checkin_count+1, fail_reason=NULL WHERE id=?')
             .run(after, now(), a.id);
           audit(a.id, null, 'daily_checkin', (isFinite(before) ? before : undefined), after, 'delta=' + (r.g.delta || 0));
-          log('签到补分：账号 #' + a.id + ' ' + a.label + ' ' + (isFinite(before) ? before : '?') + ' -> ' + after);
+          const s = checkinMark(a.id, gained);
+          log('签到补分：账号 #' + a.id + ' ' + a.label + ' ' + (isFinite(before) ? before : '?') + ' -> ' + after
+            + (gained > 0 ? (' (+' + gained + ')') : (' [无新增 -> 退避 x' + s.noGain + '，下次 ' + Math.round(checkinWaitMs(a.id) / 1000) + 's 后]')));
+        } else {
+          const s = checkinMark(a.id, 0);
+          log('签到 200 但拿不到 credits_after 账号#' + a.id + ' [退避 x' + s.noGain + ']');
         }
       } else if (r.status === 401 || r.status === 403) {
+        checkinMark(a.id, 0);
         disableAccount(a, 'CHECKIN_AUTH_FAILED');
       } else {
-        log('签到返回 http ' + r.status + ' 账号#' + a.id + ' :: ' + JSON.stringify(r.json).slice(0, 120));
+        const s = checkinMark(a.id, 0);
+        log('签到返回 http ' + r.status + ' 账号#' + a.id + ' [退避 x' + s.noGain + '，下次 ' + Math.round(checkinWaitMs(a.id) / 1000) + 's 后] :: ' + JSON.stringify(r.json).slice(0, 120));
       }
-    } catch (e) { log('签到失败 账号#' + a.id + ': ' + e.message); }
+    } catch (e) { const s = checkinMark(a.id, 0); log('签到失败 账号#' + a.id + ': ' + e.message + ' [退避 x' + s.noGain + ']'); }
   }
 }
 
@@ -523,7 +555,8 @@ async function handle(req, res) {
     if (!isAdmin) return send(res, 401, { code: 'admin_required', message: '带上 x-admin-key' });
     if (req.method === 'GET' && url === '/pool/stats') {
       return send(res, 200, { accounts: listAccounts(), inflight, max_inflight: MAX_INFLIGHT,
-        config: { checkin_interval_ms: CHECKIN_MS, daily_credits: DAILY_CREDITS, reserve_factor: RESERVE_FACTOR, max_retries: MAX_RETRIES, credit_per_clip: CREDIT_PER_CLIP },
+        config: { checkin_interval_ms: CHECKIN_MS, checkin_backoff_max_ms: CHECKIN_BACKOFF_MAX_MS, daily_credits: DAILY_CREDITS, reserve_factor: RESERVE_FACTOR, max_retries: MAX_RETRIES, credit_per_clip: CREDIT_PER_CLIP },
+        checkin_state: Array.from(checkinState.entries()).map(([id, s]) => ({ id: id, no_gain: s.noGain, wait_ms: checkinWaitMs(id), last_attempt_at: s.lastAttemptAt })),
         audit: db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 50').all() });
     }
     if (req.method === 'POST' && url === '/pool/reset') {
