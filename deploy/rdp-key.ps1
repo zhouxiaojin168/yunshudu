@@ -45,6 +45,9 @@ $SWP = 0x0001 -bor 0x0002 -bor 0x0040
 $tries = 0; $got = $false
 while ($tries -lt 8 -and -not $got) {
   $tries++
+  Down 0x12 0x38 0
+  Up 0x12 0x38 0
+  Start-Sleep -Milliseconds 60
   [void][K.In]::ShowWindow($h, 9)
   [void][K.In]::SetWindowPos($h, $HWND_TOPMOST, 0, 0, 0, 0, $SWP)
   [void][K.In]::BringWindowToTop($h)
