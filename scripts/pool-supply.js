@@ -93,6 +93,7 @@ const poolStats = () => poolReq('GET', '/pool/stats');
 const poolAdd = (acct) => poolReq('POST', '/pool/accounts', acct);
 const poolBulk = (accounts) => poolReq('POST', '/pool/accounts/bulk', { accounts: accounts });
 const poolCheckin = () => poolReq('POST', '/pool/checkin', {});
+const poolRevive = () => poolReq('POST', '/pool/accounts/revive', {});
 
 function healthyCount(st) {
   const arr = (st && st.json && st.json.accounts) || [];
@@ -256,6 +257,12 @@ async function guardRound(force) {
     state.loops++;
 
     if (h.healthy < POOL_MIN || force) {
+      /* 先试着把「被判死的号」复活（上游恢复/误判很常见），不行再补新号 */
+      try {
+        const rv = await poolRevive();
+        const n = Number((rv.json && rv.json.revived) || 0);
+        if (n > 0) { report.actions.push('revive+' + n); h.healthy += n; h.total = (rv.json.accounts || []).length; }
+      } catch (e) { log('复活检查失败: ' + e.message); }
       const need = Math.max(REFILL_BATCH, POOL_MIN - h.healthy);
       const room = Math.max(0, POOL_MAX - h.total);
       const want = Math.min(need, room);

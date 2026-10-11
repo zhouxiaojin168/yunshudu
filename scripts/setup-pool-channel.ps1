@@ -56,7 +56,9 @@ try {
 if (-not $lg.success) { Write-Output ("POOL_CHANNEL_FAIL: 登录失败 " + ($lg | ConvertTo-Json -Compress)); exit 2 }
 $adm = $lg.data.access_token
 Write-Output ("login ok user=" + $lg.data.username + " id=" + $lg.data.id)
-$H = @{ "Content-Type" = "application/json"; "Authorization" = ("Bearer " + $adm); "New-Api-User" = [string]$lg.data.id }
+$uid = 1
+if ($lg.data.user) { $uid = $lg.data.user.id }
+$H = @{ "Content-Type" = "application/json"; "Authorization" = ("Bearer " + $adm); "New-Api-User" = [string]$uid }
 
 # ---- 2) 删同名旧渠道 ----
 try {

@@ -191,6 +191,22 @@ async function probeWallet(acct) {
   } catch (e) { return { ok: false, status: 0, error: e.message }; }
 }
 
+/* 复活：把所有「不健康」的号重新探一次余额；上游说 OK 就恢复健康位（上游恢复/误判时不用手工加号） */
+async function reviveDead() {
+  const rows = db.prepare('SELECT * FROM accounts WHERE healthy=0').all();
+  let revived = 0;
+  for (const a of rows) {
+    const pr = await probeWallet(a);
+    if (pr.ok) {
+      db.prepare('UPDATE accounts SET healthy=1, fail_reason=NULL, cooldown_until=0 WHERE id=?').run(a.id);
+      audit(a.id, null, 'account_revived', undefined, Number(pr.credits), 'by=revive wallet_ok');
+      log('复活账号 #' + a.id + ' ' + a.label + ' credits=' + pr.credits);
+      revived++;
+    }
+  }
+  return { checked: rows.length, revived, accounts: listAccounts() };
+}
+
 /* ------------------------- 平台池调度 ------------------------- */
 function pickAccount(need, triedIds) {
   const rows = db.prepare('SELECT * FROM accounts WHERE healthy=1').all();
@@ -520,6 +536,7 @@ async function handle(req, res) {
       if (r.probed) { const row = db.prepare('SELECT * FROM accounts WHERE id=?').get(r.id); const pr = await probeWallet(row); if (pr.ok) r.credits = pr.credits; }
       return send(res, 200, { ok: true, id: r.id, token: r.token, label: r.label, credits: r.credits, probed: r.probed });
     }
+    if (req.method === 'POST' && url === '/pool/accounts/revive') { return send(res, 200, Object.assign({ ok: true }, await reviveDead())); }
     if (req.method === 'POST' && url === '/pool/accounts/bulk') {
       const arr = Array.isArray(body.accounts) ? body.accounts : [];
       if (!arr.length) return send(res, 400, { ok: false, code: 'no_accounts' });
