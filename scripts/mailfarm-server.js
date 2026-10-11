@@ -436,10 +436,11 @@ const httpServer = http.createServer(function (req, res) {
     if (CFG.ingestKey && String(keyOf(req)) !== CFG.ingestKey) return json(res, 401, { detail: 'bad api key' });
     return readBody(req, function (b) {
       if (b === null) return json(res, 400, { detail: 'bad json' });
-      const to = b.to || b.rcpt || b.address || '';
-      const subject = b.subject || '';
+      let subject = b.subject || '';
       let text = b.text || '';
       if (!text && b.html) text = stripTags(b.html);
+      if (b.raw) { try { const mp = parseMessage(String(b.raw)); if (!subject) subject = mp.subject; if (!text) text = mp.text; } catch (e) { log('WARN ingest raw parse fail: ' + e.message); } }
+      const to = b.to || b.rcpt || b.address || '';
       const ok = store.deliver(to, b.from || b.sender || '', subject, text);
       if (!ok) return json(res, 400, { detail: 'domain not served (add it to MF_DOMAINS)' });
       json(res, 200, { ok: true, address: String(to).toLowerCase(), codes: extractCodes(subject, text, 5) });
