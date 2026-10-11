@@ -118,20 +118,21 @@ function sync(reason) {
   if (r.status !== 0) return log('  git add 失败: ' + (r.stderr || '').trim());
 
   const st = git(['status', '--porcelain']);
-  if (!(st.stdout || '').trim()) return log('  没有变化，跳过');
-
-  const hits = riskyHits();
-  if (hits.length) {
-    git(['reset']);
-    log('  ✋ 检测到疑似敏感信息，已中止（未提交、未推送）：');
-    hits.slice(0, 5).forEach(h => log('    ' + h));
-    return;
+  if ((st.stdout || '').trim()) {
+    const hits = riskyHits();
+    if (hits.length) {
+      git(['reset']);
+      log('  ✋ 检测到疑似敏感信息，已中止（未提交、未推送）：');
+      hits.slice(0, 5).forEach(h => log('    ' + h));
+      return;
+    }
+    const msg = 'auto-sync: ' + new Date().toLocaleString('zh-CN', { hour12: false });
+    r = git(['commit', '-m', msg]);
+    if (r.status !== 0) return log('  commit 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
+    log('  committed: ' + msg);
+  } else {
+    log('  没有新变化（仍会尝试推送已存在的本地提交）');
   }
-
-  const msg = 'auto-sync: ' + new Date().toLocaleString('zh-CN', { hour12: false });
-  r = git(['commit', '-m', msg]);
-  if (r.status !== 0) return log('  commit 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
-  log('  committed: ' + msg);
 
   const tok = readToken();
   const url = remoteUrl();
