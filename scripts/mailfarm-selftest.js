@@ -127,6 +127,8 @@ function waitHealth(n) {
       check('ingest(CF Worker 通道) 收信成功', ig.status === 200 && ig.json.codes[0] === '550123', ig.json);
       const ic = await req('GET', '/v1/mailboxes/cfbox%40ytu.baby/code', undefined, { 'x-api-key': API_KEY });
       check('ingest 后能取到码', ic.json && ic.json.code === '550123', ic.json);
+      const igRaw = await req('POST', '/v1/ingest', { to: 'rawbox@ytu.baby', from: 'noreply@x.com', raw: 'Subject: Verify' + String.fromCharCode(10) + 'From: a@b.com' + String.fromCharCode(10) + String.fromCharCode(10) + 'Your login code is 334455' }, { 'x-ingest-key': 'ingest-key-123' });
+      check('ingest 整封原文(raw) 能解析出码', igRaw.status === 200 && igRaw.json.codes[0] === '334455', igRaw.json);
       const igBad = await req('POST', '/v1/ingest', { to: 'cfbox@ytu.baby', text: 'x' }, { 'x-ingest-key': 'wrong' });
       check('ingest 错 key -> 401', igBad.status === 401, igBad.status);
 
