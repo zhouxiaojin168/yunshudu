@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-11T14:51:26.486Z",
+  "generatedAt": "2026-10-11T14:51:59.222Z",
   "source": "http://127.0.0.1:3300",
   "site": {
     "name": "yunshudu",
@@ -20,6 +20,11 @@
   ],
   "vendors": [
     {
+      "id": -1006,
+      "name": "Google",
+      "icon": "Gemini.Color"
+    },
+    {
       "id": -1009,
       "name": "MiniMax",
       "icon": "Minimax.Color"
@@ -30,6 +35,19 @@
     "vip": "VIP group"
   },
   "models": [
+    {
+      "model_name": "gemini-nano-banana-2.1-image",
+      "quota_type": 1,
+      "model_price": 0.05,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
     {
       "model_name": "MiniMax-H3",
       "quota_type": 1,
