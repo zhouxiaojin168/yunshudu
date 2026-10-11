@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-11T11:37:55.815Z",
+  "generatedAt": "2026-10-11T11:38:20.856Z",
   "source": "http://127.0.0.1:3300",
   "site": {
     "name": "yunshudu",
@@ -31,7 +31,7 @@
   },
   "models": [
     {
-      "model_name": "MiniMax-M3",
+      "model_name": "MiniMax-H3",
       "quota_type": 1,
       "model_price": 0.047945205479,
       "model_ratio": 0,
@@ -44,7 +44,7 @@
       ]
     },
     {
-      "model_name": "MiniMax-H3",
+      "model_name": "MiniMax-M3",
       "quota_type": 1,
       "model_price": 0.047945205479,
       "model_ratio": 0,
