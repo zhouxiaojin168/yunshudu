@@ -14,7 +14,8 @@ param(
   [string]$ShotName = 'rc',
   [int]$SrcW = 1280,
   [int]$SrcH = 800,
-  [switch]$FocusMstsc
+  [switch]$FocusMstsc,
+  [switch]$Maximize
 )
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Namespace PC -Name U -MemberDefinition @'
@@ -57,6 +58,25 @@ Write-Host ('implied scale = ' + [math]::Round($cw / [double]$SrcW, 4) + ' x ' +
 $tx = $sx0 + [int][math]::Round(([double]$RX) * $cw / $SrcW)
 $ty = $sy0 + [int][math]::Round(([double]$RY) * $ch / $SrcH)
 Write-Host ('remote (' + $RX + ',' + $RY + ') -> screen (' + $tx + ',' + $ty + ')')
+if ($Maximize) {
+  [void][PC.U]::ShowWindow($h, 3)
+  Start-Sleep -Milliseconds 1200
+  $wr = New-Object PC.U+RECT
+  [void][PC.U]::GetWindowRect($h, [ref]$wr)
+  $cr = New-Object PC.U+RECT
+  [void][PC.U]::GetClientRect($h, [ref]$cr)
+  $pt = New-Object PC.U+POINT; $pt.x = 0; $pt.y = 0
+  [void][PC.U]::ClientToScreen($h, [ref]$pt)
+  $cw = $cr.Right - $cr.Left
+  $ch = $cr.Bottom - $cr.Top
+  $sx0 = $pt.x
+  $sy0 = $pt.y
+  Write-Host ('AFTER MAX: windowRect = ' + $wr.Left + ',' + $wr.Top + ' ' + ($wr.Right - $wr.Left) + 'x' + ($wr.Bottom - $wr.Top))
+  Write-Host ('AFTER MAX: clientSize = ' + $cw + 'x' + $ch + ' at screen ' + $sx0 + ',' + $sy0)
+  $tx = $sx0 + [int][math]::Round(([double]$RX) * $cw / $SrcW)
+  $ty = $sy0 + [int][math]::Round(([double]$RY) * $ch / $SrcH)
+  Write-Host ('remote (' + $RX + ',' + $RY + ') -> screen (' + $tx + ',' + $ty + ')')
+}
 if ($ProbeOnly) { exit 0 }
 if ($FocusMstsc) {
   [void][PC.U]::ShowWindow($h, 9)
