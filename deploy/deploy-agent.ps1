@@ -60,10 +60,11 @@ L ('deploy ' + $(if ($cur) { $cur.Substring(0,7) } else { 'none' }) + ' -> ' + $
 # 2) 下载 zip（多源回退）
 $zip  = Join-Path $TmpD ($sha + '.zip')
 $srcs = New-Object System.Collections.ArrayList
-[void]$srcs.Add('https://codeload.github.com/' + $Repo + '/zip/refs/heads/' + $Branch)
-[void]$srcs.Add('https://github.com/' + $Repo + '/archive/refs/heads/' + $Branch + '.zip')
-[void]$srcs.Add('https://ghproxy.net/https://github.com/' + $Repo + '/archive/refs/heads/' + $Branch + '.zip')
-[void]$srcs.Add('https://gh-proxy.com/https://github.com/' + $Repo + '/archive/refs/heads/' + $Branch + '.zip')
+# 按 **commit SHA** 取包（不是 refs/heads/main）：sha 是不可变地址，镜像/CDN 不可能给旧缓存
+[void]$srcs.Add('https://codeload.github.com/' + $Repo + '/zip/' + $sha)
+[void]$srcs.Add('https://github.com/' + $Repo + '/archive/' + $sha + '.zip')
+[void]$srcs.Add('https://ghproxy.net/https://github.com/' + $Repo + '/archive/' + $sha + '.zip')
+[void]$srcs.Add('https://gh-proxy.com/https://github.com/' + $Repo + '/archive/' + $sha + '.zip')
 $got = $false
 foreach ($u in $srcs) {
   try {
@@ -83,6 +84,24 @@ if (Test-Path $tmpEx) { Remove-Item -LiteralPath $tmpEx -Recurse -Force }
 Expand-Archive -LiteralPath $zip -DestinationPath $tmpEx -Force
 $inner = Get-ChildItem -LiteralPath $tmpEx -Directory | Select-Object -First 1
 if (-not $inner) { L 'zip inner dir missing -> abort'; exit 3 }
+
+# 内容校验：逐个比对「该 SHA 的 GitHub 文件树」，防止任何一环给了旧缓存（历史上真踩过：
+#   镜像返回旧 main 包 -> 内容旧但 SHA 新 -> 记为已部署，正确代码永远上不去）
+$missingList = @(); $total = 0
+try {
+  $tree = Invoke-RestMethod ('https://api.github.com/repos/' + $Repo + '/git/trees/' + $sha + '?recursive=1') -TimeoutSec 30 -UseBasicParsing -Headers @{ 'User-Agent' = 'yunshudu-agent' }
+  $blobs = @($tree.tree | Where-Object { $_.type -eq 'blob' } | Select-Object -ExpandProperty path)
+  foreach ($p in $blobs) {
+    $total++
+    $fp = Join-Path $inner.FullName ($p -replace '/', '\')
+    if (-not (Test-Path -LiteralPath $fp)) { $missingList += $p }
+  }
+  L ('content check: ' + ($total - $missingList.Count) + '/' + $total + ' blobs present')
+} catch { L ('content check API FAIL ' + $_.Exception.Message) }
+if ($missingList.Count -gt 0) {
+  L ('STALE ARCHIVE -> abort; missing ' + $missingList.Count + ' file(s) from tree, e.g. ' + (($missingList | Select-Object -First 5) -join ', '))
+  exit 5
+}
 if (Test-Path $rel) { Remove-Item -LiteralPath $rel -Recurse -Force }
 Move-Item -LiteralPath $inner.FullName -Destination $rel
 Remove-Item -LiteralPath $tmpEx -Recurse -Force
