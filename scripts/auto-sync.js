@@ -29,6 +29,7 @@ const argOf = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? Nu
 const DEBOUNCE_MS = argOf('--debounce', 8) * 1000;
 const INTERVAL_MS = argOf('--interval', 300) * 1000;
 let muteUntil = 0;   // 同步期间自己写文件产生的 watch 事件，直接忽略
+let lastPushAt = 0;  // 上次推送成功时间（无新提交时的推送节流）
 
 fs.mkdirSync(LOGD, { recursive: true });
 
@@ -131,7 +132,9 @@ function sync(reason) {
     if (r.status !== 0) return log('  commit 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
     log('  committed: ' + msg);
   } else {
-    log('  没有新变化（仍会尝试推送已存在的本地提交）');
+    // 没有新提交：只在"距上次成功推送超过 5 分钟"时才推一次，避免空转
+    if (Date.now() - lastPushAt < 5 * 60 * 1000) return log('  没有新变化，且刚推过，跳过');
+    log('  没有新变化（兜底推一次，保证之前失败的能自愈）');
   }
 
   const tok = readToken();
@@ -143,7 +146,7 @@ function sync(reason) {
 
   r = git(['-c', 'credential.helper=', '-c', `http.proxy=${PROXY}`, 'push', pushUrl, 'main:main'],
           { env: Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }) });
-  if (r.status === 0) log('  ✅ pushed -> ' + `https://github.com/${m[1]}/${m[2]}`);
+  if (r.status === 0) { lastPushAt = Date.now(); log('  ✅ pushed -> ' + `https://github.com/${m[1]}/${m[2]}`); }
   else log('  ❌ push 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
 }
 
