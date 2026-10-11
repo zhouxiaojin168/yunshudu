@@ -55,7 +55,8 @@ try {
 } catch { Write-Output ("POOL_CHANNEL_FAIL: 登录异常 " + $_.Exception.Message); exit 2 }
 if (-not $lg.success) { Write-Output ("POOL_CHANNEL_FAIL: 登录失败 " + ($lg | ConvertTo-Json -Compress)); exit 2 }
 $adm = $lg.data.access_token
-Write-Output ("login ok user=" + $lg.data.username + " id=" + $lg.data.id)
+$uinfo = $lg.data.user
+Write-Output ("login ok user=" + $uinfo.username + " id=" + $uinfo.id + " group=" + $uinfo.group)
 $uid = 1
 if ($lg.data.user) { $uid = $lg.data.user.id }
 $H = @{ "Content-Type" = "application/json"; "Authorization" = ("Bearer " + $adm); "New-Api-User" = [string]$uid }
