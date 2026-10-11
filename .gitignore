@@ -1,0 +1,23 @@
+# ---- 运行期产物：不入库 ----
+runtime/bin/
+runtime/data/
+runtime/logs/
+runtime/credentials.txt
+runtime/test-token.txt
+
+# ---- 二进制/大文件 ----
+*.exe
+*.db
+*.db-wal
+*.db-shm
+*.log
+*.pid
+
+# ---- 依赖/临时 ----
+node_modules/
+__pycache__/
+*.tmp
+.DS_Store
+Thumbs.db
+# ---- 临时调试脚本 ----
+scripts/_dbg-*.js
