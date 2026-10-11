@@ -424,7 +424,8 @@ const server = http.createServer(async (req, res) => {
 
 async function main() {
   log('pool-supply start pool=' + POOL + ' min=' + POOL_MIN + ' max=' + POOL_MAX + ' interval=' + INTERVAL + 'ms farm=' + FARM_FILE);
-  if (!SMS_GET) log('提示：未配置 SUPP_SMS_GET -> 只能从农场文件补号（register 工作流会失败）');
+  if (!SMS_GET && !MAIL_API) log('提示：未配置 SUPP_SMS_GET 也没有 mailfarm -> 只能从农场文件补号（register 工作流会失败）');
+  if (MAIL_API) log('邮箱补号已就绪 mailfarm=' + MAIL_API + ' prefix=' + MAIL_PREFIX);
   if (ONCE) { const r = await guardRound(true); log('--once: ' + JSON.stringify(r)); process.exit(0); }
   server.listen(PORT, '127.0.0.1', () => log('pool-supply listening on 127.0.0.1:' + PORT));
   await guardRound(true);

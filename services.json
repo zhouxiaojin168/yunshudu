@@ -221,11 +221,15 @@
         "SUPP_FARM_FILE": "C:\\yunshudu\\data\\farm-accounts.jsonl",
         "SUPP_REGISTER_FILE": "C:\\yunshudu\\app\\config\\pool-register.json",
         "SUPP_STATE_FILE": "C:\\yunshudu\\state\\pool-supply.json",
-        "SUPP_LOG_FILE": "C:\\yunshudu\\logs\\pool-supply.log"
+        "SUPP_LOG_FILE": "C:\\yunshudu\\logs\\pool-supply.log",
+        "SUPP_MAIL_API": "http://127.0.0.1:8099",
+        "SUPP_MAIL_PREFIX": "hl",
+        "SUPP_MAIL_WAIT_MS": "90000"
       },
       "envFrom": {
         "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY",
-        "SUPP_ADMIN_KEY": "H3P_ADMIN_KEY"
+        "SUPP_ADMIN_KEY": "H3P_ADMIN_KEY",
+        "SUPP_MAIL_KEY": "MAILFARM_API_KEY"
       },
       "health": {
         "kind": "http",
@@ -235,7 +239,47 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。",
+      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。 已接入 mailfarm 邮箱补号（type=mail-acquire/mail-wait，见 config/pool-register.mailfarm.json）：邮箱制上游可零短信成本开号。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "mailfarm",
+      "type": "node",
+      "task": "yunshudu-mailfarm",
+      "managed": "auto",
+      "port": 8099,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\mailfarm-server.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "mailfarm"
+      ],
+      "env": {
+        "MF_SERVICE_NAME": "mailfarm",
+        "MF_DOMAINS": "allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby",
+        "MF_HTTP_HOST": "0.0.0.0",
+        "MF_HTTP_PORT": "8099",
+        "MF_SMTP_ENABLE": "0",
+        "MF_MAILBOX_TTL_S": "3600",
+        "MF_CODE_MAX_AGE_S": "900"
+      },
+      "envFrom": {
+        "MF_API_KEY": "MAILFARM_API_KEY",
+        "MF_INGEST_KEY": "MAILFARM_INGEST_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8099/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
