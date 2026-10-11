@@ -9,7 +9,7 @@
   "_http_notes": [
     "★ 生图 body 的 resolution / aspectRatio / quality 必须是 **valueStr 字符串**：resolution ∈ {\"1K\",\"2K\",\"4K\"}，aspectRatio ∈ {\"Auto\",\"9:16\",\"16:9\",...}，quality=\"medium\"（无 qualities 的模型）。发数字会 HTTP 400 bind body failed。",
     "★ generate 返回 data.id 即任务号；结果在 POST /api/feed/creation/search/my 的 data.feeds[] 里按 commonInfo.id 匹配，status 2=Completed / 6=Failed / 1=InProgress / 3=NeedCharge。",
-    "★ /api/feed/* 在边缘有 canary 抖动：同一请求会随机回 404 page not found，重试即 200（池子 pollPending 每 5s 重试，天然规避）。",
+    "★ 更正（R88）：/api/feed/* 的「404 page not found」不是上游抖动，是**我自己脚本把 body 拼进 URL** 造成的；URL 正确后每次 200。轮询仍保留重试（幂等只读）。",
     "★ 成本口径：credit 单价按 equity.modelControl[].videoCosts 的 resolutionTypeList 映射（例：nano-banana2 1K/2K=6 credit，4K=10 credit）。",
     "★ 海螺网页端**没有签到领额度接口**：checkin 语义=同步一次余额，delta 恒 0，靠退避收敛（H3P_CHECKIN_MS）。"
   ],

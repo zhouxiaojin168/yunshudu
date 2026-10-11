@@ -10,7 +10,12 @@ const calls = [];
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--call') {
     const spec = args[i + 1];
-    if (spec) { const parts = spec.split(' '); calls.push({ m: (parts[0] || 'GET').toUpperCase(), u: parts.slice(1).join(' '), b: (parts[2] || '').trim() }); }
+    if (spec) {
+      const m = spec.slice(0, spec.indexOf(' ')).toUpperCase();
+      const rest = spec.slice(spec.indexOf(' ') + 1).trim();
+      const sp = rest.indexOf(' ');
+      calls.push({ m: m, u: sp >= 0 ? rest.slice(0, sp) : rest, b: sp >= 0 ? rest.slice(sp + 1).trim() : '' });
+    }
     i++;
   }
 }
