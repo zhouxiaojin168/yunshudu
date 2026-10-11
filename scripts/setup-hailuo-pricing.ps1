@@ -74,15 +74,9 @@ function PutOpt([string]$key, [string]$val) {
   $r2 = ApiJson "PUT" "/api/option/" @{ key = $key; value = $val }
   if ($r2 -and $r2.success) { Log ("retry ok: " + $key) } else { $script:fail++; Log ("SET STILL FAILED -> " + $key) }
 }
-function J($o) { return ($o | ConvertTo-Json -Depth 10 -Compress) }
-# 少数选项在服务端是强类型（如 AutoGroups = []string），value 必须原样传 JSON 数组/对象，不能当字符串
-function PutOptRaw([string]$key, $val) {
-  $r = ApiJson "PUT" "/api/option/" @{ key = $key; value = $val }
-  if ($r -and $r.success) { Log ("set " + $key + " = " + (J $val)); return }
-  $msg = ""; if ($r) { $msg = [string]$r.message }
-  $script:fail++; Log ("SET FAILED -> " + $key + " :: " + $msg)
-}
-
+# 注意：PS 5.1 里 `$a | ConvertTo-Json` 会把单元素数组拆成标量（["default"] -> "default"），
+# 必须用 -InputObject 才不会拆；这类选项服务端要的是「JSON 文本」，所以 J 返回字符串。
+function J($o) { return (ConvertTo-Json -InputObject $o -Depth 10 -Compress) }
 # ---------- 1) 合规闸（订阅/兑换/邀请 的总开关） ----------
 if (-not $NoCompliance) {
   $r = ApiJson "POST" "/api/option/payment_compliance" @{ confirmed = $true }
@@ -108,7 +102,7 @@ if ($cfg.groups) {
   if ($g.group_group_ratio)    { PutOpt "group_ratio_setting.group_group_ratio"   (J $g.group_group_ratio) }
   if ($g.topup_group_ratio)    { PutOpt "TopupGroupRatio"                          (J $g.topup_group_ratio) }
   if ($g.user_usable_groups)   { PutOpt "UserUsableGroups"                         (J $g.user_usable_groups) }
-  if ($g.auto_groups)          { PutOptRaw "AutoGroups" $g.auto_groups }   # AutoGroups 是 []string，必须传真数组
+  if ($g.auto_groups)          { PutOpt "AutoGroups" (J $g.auto_groups) }   # 必须传「JSON 文本」，不能传真数组
   PutOpt "GroupRatio" (J $g.group_ratio)
   PutOpt "GroupGroupRatio" (J $g.group_group_ratio)
 }
