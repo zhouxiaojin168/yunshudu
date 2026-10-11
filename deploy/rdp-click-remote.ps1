@@ -79,7 +79,7 @@ if ($Maximize) {
 }
 if ($ProbeOnly) { exit 0 }
 if ($FocusMstsc) {
-  [void][PC.U]::ShowWindow($h, 9)
+  [void][PC.U]::ShowWindow($h, 3)
   [void][PC.U]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x0001 -bor 0x0002 -bor 0x0040)
   [void][PC.U]::BringWindowToTop($h)
   $fg = [PC.U]::GetForegroundWindow()

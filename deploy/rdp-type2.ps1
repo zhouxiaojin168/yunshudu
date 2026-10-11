@@ -33,7 +33,7 @@ $h = $p.MainWindowHandle
 $tries = 0; $got = $false
 while ($tries -lt 10 -and -not $got) {
   $tries++
-  [void][P2.U]::ShowWindow($h, 9)
+  [void][P2.U]::ShowWindow($h, 3)
   [void][P2.U]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x0043)
   [void][P2.U]::BringWindowToTop($h)
   $fg = [P2.U]::GetForegroundWindow()

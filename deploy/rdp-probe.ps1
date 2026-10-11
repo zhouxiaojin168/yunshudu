@@ -42,7 +42,7 @@ $HWND_TOPMOST = [IntPtr](-1); $HWND_NOTOPMOST = [IntPtr](-2); $SWP = 0x0001 -bor
 $tries = 0; $got = $false
 while ($tries -lt 10 -and -not $got) {
   $tries++
-  [void][PB.U]::ShowWindow($h, 9)
+  [void][PB.U]::ShowWindow($h, 3)
   [void][PB.U]::SetWindowPos($h, $HWND_TOPMOST, 0, 0, 0, 0, $SWP)
   [void][PB.U]::BringWindowToTop($h)
   $fg = [PB.U]::GetForegroundWindow()
