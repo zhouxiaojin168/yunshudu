@@ -272,3 +272,228 @@ function parseMessage(raw) {
   const from = ((head.match(/^from:\s*(.*)$/im) || [])[1] || '').trim();
   return { subject: subject, from: from, text: collectText(body) };
 }
+
+/* ----------------------------- SMTP 收信 ----------------------------- */
+function startSmtp() {
+  const server = net.createServer(function (sock) {
+    let buf = '';
+    let inData = false;
+    let dataLines = [];
+    let mailFrom = '';
+    let rcptTos = [];
+    sock.setTimeout(120000);
+    sock.write('220 ' + CFG.smtpIdent + ' ' + CFG.smtpIdent + CRLF);
+
+    function reply(s) { try { sock.write(s + CRLF); } catch (e) {} }
+
+    function finishData() {
+      const raw = dataLines.join(NL);
+      let okCount = 0;
+      let subj = '';
+      try {
+        const m = parseMessage(raw.replace(/\n\.\./g, '\n.'));
+        subj = m.subject;
+        for (let i = 0; i < rcptTos.length; i++) {
+          if (store.deliver(rcptTos[i], mailFrom, m.subject, m.text)) okCount++;
+        }
+      } catch (e) { log('WARN parse fail:', e.message); }
+      log('smtp recv from=' + mailFrom + ' rcpt=' + rcptTos.join(',') + ' ok=' + okCount + ' subject=' + JSON.stringify(String(subj).slice(0, 60)));
+      dataLines = []; rcptTos = []; mailFrom = '';
+      reply('250 Message accepted for delivery');
+    }
+
+    function handle(line) {
+      if (inData) {
+        if (line === '.') { inData = false; finishData(); return; }
+        if (dataLines.length < 20000) dataLines.push(line);
+        return;
+      }
+      const up = line.toUpperCase();
+      if (up.indexOf('EHLO') === 0 || up.indexOf('HELO') === 0) {
+        sock.write('250-' + CFG.smtpIdent + CRLF);
+        sock.write('250-SIZE ' + CFG.smtpMaxSize + CRLF);
+        sock.write('250-8BITMIME' + CRLF);
+        sock.write('250 HELP' + CRLF);
+        return;
+      }
+      if (up.indexOf('MAIL FROM') === 0) {
+        const m = line.match(/<([^>]*)>/);
+        mailFrom = m ? m[1] : line.slice(line.indexOf(':') + 1).trim();
+        reply('250 OK');
+        return;
+      }
+      if (up.indexOf('RCPT TO') === 0) {
+        const m = line.match(/<([^>]*)>/);
+        if (m) rcptTos.push(m[1].trim().toLowerCase());
+        reply('250 OK');
+        return;
+      }
+      if (up === 'DATA') {
+        if (rcptTos.length === 0) { reply('503 need RCPT first'); return; }
+        inData = true; dataLines = [];
+        reply('354 End data with <CR><LF>.<CR><LF>');
+        return;
+      }
+      if (up.indexOf('RSET') === 0) { mailFrom = ''; rcptTos = []; dataLines = []; inData = false; reply('250 OK'); return; }
+      if (up.indexOf('NOOP') === 0) { reply('250 OK'); return; }
+      if (up.indexOf('VRFY') === 0) { reply('252 Cannot VRFY'); return; }
+      if (up.indexOf('HELP') === 0) { reply('250 OK'); return; }
+      if (up.indexOf('QUIT') === 0) { reply('221 Bye'); try { sock.end(); } catch (e) {} return; }
+      reply('250 OK');
+    }
+
+    sock.on('data', function (chunk) {
+      buf += chunk.toString('utf8');
+      for (;;) {
+        const i1 = buf.indexOf(CRLF);
+        const i2 = buf.indexOf(NL);
+        let cut = -1, sep = 0;
+        if (i1 >= 0 && (i2 < 0 || i1 <= i2)) { cut = i1; sep = 2; }
+        else if (i2 >= 0) { cut = i2; sep = 1; }
+        else break;
+        const line = buf.slice(0, cut);
+        buf = buf.slice(cut + sep);
+        handle(line);
+      }
+    });
+    sock.on('error', function () {});
+    sock.on('timeout', function () { try { sock.destroy(); } catch (e) {} });
+  });
+  server.on('error', function (e) {
+    log('WARN SMTP 未启动 (' + CFG.smtpHost + ':' + CFG.smtpPort + ') -> ' + e.code + ' ' + e.message);
+    log('     提示：机房封 25 时用 MF_SMTP_ENABLE=0，改用 POST /v1/ingest（Cloudflare Email Worker）。');
+  });
+  server.listen(CFG.smtpPort, CFG.smtpHost, function () {
+    log('SMTP listening on ' + CFG.smtpHost + ':' + CFG.smtpPort + ' (ident=' + CFG.smtpIdent + ')');
+  });
+  return server;
+}
+
+/* ----------------------------- HTTP API ----------------------------- */
+function json(res, code, obj) {
+  const b = Buffer.from(JSON.stringify(obj), 'utf8');
+  res.writeHead(code, { 'content-type': 'application/json', 'content-length': b.length });
+  res.end(b);
+}
+function readBody(req, cb) {
+  let chunks = [], len = 0;
+  req.on('data', function (c) { len += c.length; if (len > 1048576) { try { req.destroy(); } catch (e) {} return; } chunks.push(c); });
+  req.on('end', function () {
+    const raw = Buffer.concat(chunks).toString('utf8');
+    if (!raw) return cb({});
+    try { cb(JSON.parse(raw)); } catch (e) { cb(null); }
+  });
+}
+function keyOf(req) { return req.headers['x-api-key'] || req.headers['x-ingest-key'] || ''; }
+function badKey(req) {
+  if (!CFG.apiKey) return false;
+  return String(keyOf(req)) !== CFG.apiKey;
+}
+function acquireKeyBad(req) {
+  if (!CFG.requireKeyOnAcquire) return false;
+  if (!CFG.apiKey) return false;
+  return String(req.headers['x-api-key'] || '') !== CFG.apiKey;
+}
+
+const httpServer = http.createServer(function (req, res) {
+  let path = '/';
+  let query = {};
+  try {
+    const u = new URL(req.url, 'http://localhost');
+    path = decodeURIComponent(u.pathname);
+    u.searchParams.forEach(function (v, k) { query[k] = v; });
+  } catch (e) { json(res, 400, { detail: 'bad url' }); return; }
+  const method = req.method || 'GET';
+
+  if (method === 'GET' && path === '/healthz') return json(res, 200, store.healthz());
+
+  if (method === 'GET' && (path === '/v1/public/stats')) return json(res, 200, store.stats());
+
+  if (method === 'GET' && path === '/v1/stats') {
+    if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
+    return json(res, 200, store.stats());
+  }
+
+  if (method === 'POST' && path === '/v1/mailboxes/acquire') {
+    if (acquireKeyBad(req)) return json(res, 401, { detail: 'bad api key' });
+    return readBody(req, function (b) {
+      if (b === null) return json(res, 400, { detail: 'bad json' });
+      json(res, 200, store.acquire(b.prefix, b.domain));
+    });
+  }
+
+  if (method === 'POST' && path === '/v1/mailboxes/acquire_batch') {
+    if (acquireKeyBad(req)) return json(res, 401, { detail: 'bad api key' });
+    return readBody(req, function (b) {
+      if (b === null) return json(res, 400, { detail: 'bad json' });
+      const boxes = store.acquireBatch(b.n === undefined ? 10 : b.n, b.prefix);
+      json(res, 200, { count: boxes.length, mailboxes: boxes });
+    });
+  }
+
+  // 收信：给 Cloudflare Email Worker / 转发器用（不需要 25 端口）
+  if (method === 'POST' && path === '/v1/ingest') {
+    if (CFG.ingestKey && String(keyOf(req)) !== CFG.ingestKey) return json(res, 401, { detail: 'bad api key' });
+    return readBody(req, function (b) {
+      if (b === null) return json(res, 400, { detail: 'bad json' });
+      const to = b.to || b.rcpt || b.address || '';
+      const subject = b.subject || '';
+      let text = b.text || '';
+      if (!text && b.html) text = stripTags(b.html);
+      const ok = store.deliver(to, b.from || b.sender || '', subject, text);
+      if (!ok) return json(res, 400, { detail: 'domain not served (add it to MF_DOMAINS)' });
+      json(res, 200, { ok: true, address: String(to).toLowerCase(), codes: extractCodes(subject, text, 5) });
+    });
+  }
+
+  let m = path.match(/^\/v1\/mailboxes\/(.+)\/(code|messages)$/);
+  if (m && method === 'GET') {
+    const address = m[1];
+    const kind = m[2];
+    if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
+    if (kind === 'code') {
+      let t = Number(query.timeout || 0); if (!Number.isFinite(t) || t < 0) t = 0; if (t > 120) t = 120;
+      const deadline = Date.now() + t * 1000;
+      (function poll() {
+        const code = store.latestCode(address);
+        if (code) return json(res, 200, { address: address, code: code, found: true });
+        if (Date.now() >= deadline) return json(res, 200, { address: address, code: null, found: false });
+        setTimeout(poll, 250);
+      })();
+      return;
+    }
+    let lim = Number(query.limit || 20); if (!Number.isFinite(lim) || lim < 1) lim = 20; if (lim > 200) lim = 200;
+    const msgs = store.messages(address, lim);
+    if (msgs === null) return json(res, 404, { detail: 'mailbox not found' });
+    return json(res, 200, { address: address, count: msgs.length, messages: msgs });
+  }
+
+  if (method === 'GET' && (path === '/' || path === '/index.html')) {
+    const s = store.stats();
+    const body = '<html><head><meta charset="utf-8"><title>' + CFG.service + '</title></head><body>' +
+      '<h3>' + CFG.service + ' ' + CFG.version + ' (node)</h3>' +
+      '<p>domains: ' + s.domains.join(' , ') + '</p>' +
+      '<p>mailboxes: ' + s.mailboxes + ' | messages: ' + s.messages + '</p>' +
+      '<p>smtp_enabled: ' + s.smtp_enabled + '</p>' +
+      '<p><a href="/docs">/docs</a> - <a href="/openapi.json">/openapi.json</a></p></body></html>';
+    const b = Buffer.from(body, 'utf8');
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'content-length': b.length });
+    return res.end(b);
+  }
+
+  json(res, 404, { detail: 'Not Found' });
+});
+
+/* ------------------------------- main ------------------------------- */
+function main() {
+  httpServer.listen(CFG.httpPort, CFG.httpHost, function () {
+    log(CFG.service + ' ' + CFG.version + ' (node) starting');
+    log('HTTP listening on http://' + CFG.httpHost + ':' + CFG.httpPort);
+    log('domains = ' + CFG.domains.join(','));
+    log('api_key ' + (CFG.apiKey ? 'enabled' : 'disabled (dev mode)') + ' | ingest_key ' + (CFG.ingestKey ? 'enabled' : 'disabled'));
+    if (CFG.smtpEnabled) startSmtp();
+    else log('SMTP disabled (MF_SMTP_ENABLE=0) -> 只走 POST /v1/ingest');
+  });
+  httpServer.on('error', function (e) { log('FATAL HTTP bind fail: ' + e.message); process.exit(2); });
+}
+main();

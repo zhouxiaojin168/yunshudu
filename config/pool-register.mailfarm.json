@@ -1,0 +1,16 @@
+{
+  "_note": "补号源②：邮箱型注册工作流（走自建 mailfarm，不需要手机号/接码平台）。把 base 与 path 换成目标上游真实接口即可，pool-supply.js 不用改。",
+  "_vars": "步骤里 {{name}} 会被替换为前面步骤 save 出来的变量；type=mail-acquire 取邮箱、mail-wait 等验证码、emit 决定写入池子的账号字段（必须有 token）。",
+  "base": "https://upstream.example.com",
+  "mail_prefix": "hl",
+  "steps": [
+    { "name": "取邮箱", "type": "mail-acquire", "save_email": "email", "save_id": "email_id" },
+    { "name": "发验证码", "type": "http", "method": "POST", "path": "/api/account/send-code", "body": { "email": "{{email}}" }, "expect": 200 },
+    { "name": "等邮件", "type": "sleep", "ms": 2000 },
+    { "name": "收验证码", "type": "mail-wait", "from": "email_id", "save": "code" },
+    { "name": "提交注册", "type": "http", "method": "POST", "path": "/api/account/register",
+      "body": { "email": "{{email}}", "code": "{{code}}", "password": "{{password}}" },
+      "save": { "token": "data.token", "label": "data.account_id" }, "expect": 200 },
+    { "name": "整理账号", "type": "emit", "as": { "token": "{{token}}", "label": "reg-{{email}}" } }
+  ]
+}

@@ -25,6 +25,11 @@
  *     SUPP_SMS_KEY         接码平台 key（会以 &key= 拼到上面的 URL）
  *     SUPP_SMS_WAIT_MS     查码最长等待（默认 60000）
  *     SUPP_SMS_HEADERS    额外请求头 JSON，如 {"Authorization":"Bearer xxx"}（5sim 这类必须）
+ *     --- 邮箱型注册（不需要手机号/接码平台，走自建 mailfarm）---
+ *     SUPP_MAIL_API        mailfarm 地址（默认 http://127.0.0.1:8099）
+ *     SUPP_MAIL_KEY        mailfarm 的 x-api-key（配了 MF_API_KEY 就必填）
+ *     SUPP_MAIL_PREFIX     邮箱前缀（默认 hl）
+ *     SUPP_MAIL_WAIT_MS    等邮件验证码的最长等待（默认 90000）
  *     SUPP_INTERVAL_MS     守护循环间隔（默认 60000）
  *     SUPP_CHECKIN_EVERY   每 N 轮做一次全池签到（默认 10）
  *     SUPP_REFILL_BATCH    每次补号数量（默认 3）
@@ -51,6 +56,29 @@ const SMS_GET = process.env.SUPP_SMS_GET || '';
 const SMS_POLL = process.env.SUPP_SMS_POLL || '';
 const SMS_KEY = process.env.SUPP_SMS_KEY || '';
 const SMS_WAIT_MS = Number(process.env.SUPP_SMS_WAIT_MS || 60000);
+/* ---- 补号源①.5：mailfarm 邮箱农场（自有域名 catch-all 收信 + 自动取码，零短信成本）---- */
+const MAIL_API = String(process.env.SUPP_MAIL_API || 'http://127.0.0.1:8099').replace(/\/+$/, '');
+const MAIL_KEY = process.env.SUPP_MAIL_KEY || '';
+const MAIL_PREFIX = process.env.SUPP_MAIL_PREFIX || 'hl';
+const MAIL_WAIT_MS = Number(process.env.SUPP_MAIL_WAIT_MS || 90000);
+const MAIL_ACQUIRE_PATH = process.env.SUPP_MAIL_ACQUIRE_PATH || '/v1/mailboxes/acquire';
+function mailHeaders() { const h = { 'content-type': 'application/json' }; if (MAIL_KEY) h['x-api-key'] = MAIL_KEY; return h; }
+async function mailAcquire(prefix) {
+  const r = await fetch(MAIL_API + MAIL_ACQUIRE_PATH, { method: 'POST', headers: mailHeaders(), body: JSON.stringify({ prefix: prefix || MAIL_PREFIX }) });
+  const t = await r.text();
+  let j = null; try { j = JSON.parse(t); } catch (e) {}
+  if (r.status !== 200 || !j || !j.address) throw new Error('mailfarm 取邮箱失败 HTTP ' + r.status + ': ' + String(t).slice(0, 200));
+  return { email: j.address, domain: j.domain || '', id: j.address };
+}
+async function mailWaitCode(address) {
+  const url = MAIL_API + '/v1/mailboxes/' + encodeURIComponent(address) + '/code?timeout=' + Math.round(MAIL_WAIT_MS / 1000);
+  const r = await fetch(url, { headers: mailHeaders() });
+  const t = await r.text();
+  let j = null; try { j = JSON.parse(t); } catch (e) {}
+  if (r.status !== 200) throw new Error('mailfarm 取码失败 HTTP ' + r.status + ': ' + String(t).slice(0, 200));
+  if (!j || !j.code) throw new Error('mailfarm 等验证码超时 ' + address);
+  return j.code;
+}
 const INTERVAL = Number(process.env.SUPP_INTERVAL_MS || 60000);
 const CHECKIN_EVERY = Number(process.env.SUPP_CHECKIN_EVERY || 10);
 const REFILL_BATCH = Number(process.env.SUPP_REFILL_BATCH || 3);
@@ -218,6 +246,19 @@ async function runRegisterFlow() {
       const code = await smsWaitCode(vars[step.from || 'phone_id']);
       vars[step.save || 'code'] = code;
       log('收到验证码 ' + code);
+      continue;
+    }
+    if (type === 'mail-acquire') {
+      const got = await mailAcquire(step.prefix || flow.mail_prefix);
+      vars[step.save_email || 'email'] = got.email;
+      vars[step.save_id || 'email_id'] = got.id;
+      log('取邮箱 ' + got.email);
+      continue;
+    }
+    if (type === 'mail-wait') {
+      const code = await mailWaitCode(vars[step.from || 'email_id']);
+      vars[step.save || 'code'] = code;
+      log('收到邮箱验证码 ' + code);
       continue;
     }
     if (type === 'emit') {
