@@ -1,12 +1,17 @@
 {
-  "_note": "乙路-海外站（hailuoai.video，build prod-en-0.1.881）：与国内站**同一套签名**（header token + header yy + 公共参数），只是 base 不同、计价 $、模型更多。账号 token 形如 \"<_token>|<uuid>|<device_id>\"。R87 已用真号在 hayluoai.video 上跑通 7 接口。",
+  "_note": "乙路-海外站 hailuoai.video（build prod-en-0.1.881） 网页端适配器（https://hailuoai.video）：签名=header token + header yy + 公共参数（scripts/hailuo-sign.js）。账号 token 形如 \"<_token>|<uuid>|<device_id>\"。",
   "_verify": [
-    "★R87 生产实测（海外真号，7/7 HTTP 200 code=0）：hailuo-sign.js 同一签名器在 hailuoai.video 上直接可用（只换 base）。",
-    "★与国内站差异：①计价 $（credit_combo: $5→500 credit ⇒ $0.01/credit）②新人礼 **150 credits**（国内 80 贝壳），到期 1792022399999=2026-10-14 23:59 UTC ③模型 22 个（国内 13 个）",
-    "★海外站独有模型（国内站没有）：nano-banana2(1 credit, 1K/2K/4K)、seedream-4.5(1, 2K/4K)、gpt-image-1.5(1, Low/Med/High→4/8/15)、veo3.1-t2v/i2v/s2v/t2v-fast(会员,100~200)、sora2-t2v/i2v(会员,120)",
-    "信用同国内：image-01=1 credit；H3 视频 23218=12~15、23200/23204/23210/23217=25/80/50、23210 唯一 supportFrame=true。",
-    "免费档注意：veo3.1*/sora2* 的 isMember=true ⇒ 免费号不可用，要会员档（Standard $10.50/月 起）。",
-    "task 字段名仍待真号确认（node scripts/probe-hailuo.js --base https://hailuoai.video --token ... --gen，约 1 credit）"
+    "★R88 生产实测（真号 Xiao Jin Zhou，150 credits → 144）：POST /v2/api/multimodal/generate/image + resolution:\"1K\"/aspectRatio:\"Auto\"/quality:\"medium\" → HTTP 200 code=0，data.id=565797972991188996，扣 6 credits。",
+    "★结果：POST /api/feed/creation/search/my {\"cursor\":\"\",\"limit\":20} → feeds[0].metaInfo.imageMetaInfo.mediaInfo.url = 真图（1408x768，带 MINIMAX|Hailuo AI 水印），本地落盘 r88-hailuo-gen\\gen1-nano-banana2.jpg。",
+    "★海外站模型 22 个；独有 nano-banana2(1K/2K=6,4K=10 credit)、seedream-4.5(2K/4K=4)、gpt-image-1.5(Low4/Med8/High15)、veo3.1*/sora2*(isMember=true，免费号不可用)。",
+    "★海外新人礼 150 credits，到期 1792022399999 = 2026-10-14 23:59 UTC。"
+  ],
+  "_http_notes": [
+    "★ 生图 body 的 resolution / aspectRatio / quality 必须是 **valueStr 字符串**：resolution ∈ {\"1K\",\"2K\",\"4K\"}，aspectRatio ∈ {\"Auto\",\"9:16\",\"16:9\",...}，quality=\"medium\"（无 qualities 的模型）。发数字会 HTTP 400 bind body failed。",
+    "★ generate 返回 data.id 即任务号；结果在 POST /api/feed/creation/search/my 的 data.feeds[] 里按 commonInfo.id 匹配，status 2=Completed / 6=Failed / 1=InProgress / 3=NeedCharge。",
+    "★ /api/feed/* 在边缘有 canary 抖动：同一请求会随机回 404 page not found，重试即 200（池子 pollPending 每 5s 重试，天然规避）。",
+    "★ 成本口径：credit 单价按 equity.modelControl[].videoCosts 的 resolutionTypeList 映射（例：nano-banana2 1K/2K=6 credit，4K=10 credit）。",
+    "★ 海螺网页端**没有签到领额度接口**：checkin 语义=同步一次余额，delta 恒 0，靠退避收敛（H3P_CHECKIN_MS）。"
   ],
   "name": "hailuo-web-intl",
   "base": "https://hailuoai.video",
@@ -25,18 +30,124 @@
       "method": "GET",
       "path": "/v1/api/billing/credit",
       "map": {
-        "credits_after": "data.total_credit",
-        "credits_before": "data.total_credit"
+        "credits_before": "data.total_credit",
+        "credits_after": "data.total_credit"
       }
     },
     "task": {
       "method": "POST",
       "path": "/v2/api/multimodal/generate/image",
+      "async": true,
+      "body": {
+        "quantity": "{{n:quantity}}",
+        "parameter": {
+          "modelID": "nano-banana2",
+          "desc": "{{prompt}}",
+          "fileList": [],
+          "useOriginPrompt": true,
+          "aspectRatio": "{{aspectRatio}}",
+          "resolution": "{{resolution}}",
+          "quality": "{{quality}}",
+          "referenceMode": ""
+        },
+        "projectID": "0"
+      },
+      "models": {
+        "nano-banana2": {
+          "modelID": "nano-banana2",
+          "resolution": "1K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 6,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "nano-banana2",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "seedream-4.5": {
+          "modelID": "seedream-4.5",
+          "resolution": "2K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 4,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "seedream-4.5",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "gpt-image-1.5": {
+          "modelID": "gpt-image-1.5",
+          "resolution": "Medium",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 8,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "gpt-image-1.5",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "image-01": {
+          "modelID": "image-01",
+          "cost": 1,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "image-01",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true
+            },
+            "projectID": "0"
+          }
+        }
+      },
       "map": {
-        "task_id": "data.taskID",
-        "result_url": "data.fileURL",
-        "wallet_before": "data.creditBefore",
-        "wallet_after": "data.creditAfter"
+        "task_id": "data.id"
+      }
+    },
+    "query": {
+      "method": "POST",
+      "path": "/api/feed/creation/search/my",
+      "body": {
+        "cursor": "",
+        "limit": "{{n:limit}}"
+      },
+      "map": {
+        "list_path": "data.feeds",
+        "id_path": "commonInfo.id",
+        "status_path": "commonInfo.status",
+        "url_path": "metaInfo.imageMetaInfo.mediaInfo.url",
+        "cover_path": "feedCoverInfo.coverURL"
       }
     }
   }

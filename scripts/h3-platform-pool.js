@@ -579,8 +579,10 @@ async function handle(req, res) {
       return send(res, r.status, { code: r.code, message: r.message, detail: r.detail || null, queued: !!r.queued }, r.status === 429 ? { 'retry-after': '5' } : undefined);
     }
     const taskId = 'task_' + crypto.randomBytes(6).toString('hex');
+    /* node:sqlite 不认 undefined -> 一律转 null（异步任务 result_url 起初就是空的） */
+    const nn = (v) => (v === undefined || v === null) ? null : v;
     db.prepare('INSERT INTO tasks (id,api_key,model,spec_json,status,credits_cost,account_id,attempts,upstream_task_id,result_url,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(taskId, a.key.key, model, JSON.stringify({ prompt: body.prompt || null }), (r.pending ? 'pending' : 'succeeded'), cost, r.account_id, r.attempts, r.upstream_task_id, r.result_url, null, now(), now());
+      .run(taskId, a.key.key, model, JSON.stringify({ prompt: body.prompt || null }), (r.pending ? 'pending' : 'succeeded'), cost, nn(r.account_id), nn(r.attempts), nn(r.upstream_task_id), nn(r.result_url), null, now(), now());
     if (r.account_id) audit(r.account_id, a.key.key, 'task_ok', r.wallet.before, r.wallet.after, 'task=' + taskId + ' attempts=' + r.attempts);
     autoRevoke();
     if (s.kind === 'chat') return send(res, 200, { id: 'chatcmpl_' + taskId, object: 'chat.completion', model, choices: [{ index: 0, message: { role: 'assistant', content: r.text } }], usage: { total_tokens: 1 } });
