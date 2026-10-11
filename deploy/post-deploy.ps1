@@ -39,6 +39,16 @@ function Test-SvcHealth($svc) {
       return ($r.StatusCode -eq $expect)
     } catch { return $false }
   }
+  if ($h.kind -eq 'tcp' -and $svc.port) { return (Test-Tcp ([int]$svc.port)) }
+  if ($h.kind -eq 'file') {
+    $fp = [string]$h.path
+    if (-not $fp) { return $false }
+    if (-not (Test-Path -LiteralPath $fp)) { return $false }
+    $max = 900
+    if ($h.maxAgeSec) { $max = [int]$h.maxAgeSec }
+    $age = ((Get-Date) - (Get-Item -LiteralPath $fp).LastWriteTime).TotalSeconds
+    return ($age -le $max)
+  }
   if ($svc.port) { return (Test-Tcp ([int]$svc.port)) }
   return $false
 }

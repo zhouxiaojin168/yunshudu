@@ -58,6 +58,29 @@ function log(line) {
   } catch (e) { /* 日志失败不影响转发 */ }
 }
 
+const RL_MAX = Number(process.env.EDGE_RL_MAX || 0);   // 每 IP 每分钟上限，0 = 不限流
+const RL_WINDOW = 60000;
+const rlHits = new Map();
+let rlBlocked = 0;
+
+function rateLimited(ip) {
+  if (RL_MAX <= 0) return false;
+  const now = Date.now();
+  const arr = (rlHits.get(ip) || []).filter((t) => now - t < RL_WINDOW);
+  arr.push(now);
+  rlHits.set(ip, arr);
+  if (rlHits.size > 5000) {
+    const cutoff = now - RL_WINDOW;
+    Array.from(rlHits.keys()).forEach((k) => {
+      const v = rlHits.get(k);
+      if (!v || !v.length || v[v.length - 1] < cutoff) rlHits.delete(k);
+    });
+  }
+  if (arr.length > RL_MAX) { rlBlocked++; return true; }
+  return false;
+}
+
+
 const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade']);
 
 function clientIp(req) {
@@ -79,6 +102,9 @@ function healthBody(port) {
     uptimeSec: Math.round((Date.now() - T0) / 1000),
     requests: reqCount,
     errors: errCount,
+    rateLimitMax: RL_MAX,
+    rateLimitedCount: rlBlocked,
+    accessLog: ACCESS_LOG,
     node: process.version,
     time: new Date().toISOString()
   });
@@ -92,6 +118,22 @@ function handle(req, res) {
     res.end(healthBody(self));
     return;
   }
+
+  const ip = clientIp(req);
+  if (rateLimited(ip)) {
+    res.writeHead(429, { 'Content-Type': 'application/json; charset=utf-8', 'Retry-After': '60' });
+    res.end(JSON.stringify({ error: { message: 'edge proxy: rate limit exceeded', type: 'proxy_rate_limited' } }));
+    if (rlBlocked === 1 || rlBlocked % 50 === 0) log('RATE_LIMIT ip=' + ip + ' blocked=' + rlBlocked);
+    return;
+  }
+
+  const t0 = Date.now();
+  res.on('finish', () => {
+    const ms = Date.now() - t0;
+    if (ms > 5000) log('SLOW ' + String(req.method) + ' ' + String(req.url) + ' -> ' + res.statusCode + ' ' + ms + 'ms ip=' + ip);
+  });
+
+
 
   reqCount++;
   const headers = Object.assign({}, req.headers);
@@ -131,7 +173,7 @@ function handle(req, res) {
 
   req.pipe(up);
 
-  if (ACCESS_LOG) log('REQ ' + String(req.method) + ' ' + String(req.url) + ' <- ' + clientIp(req));
+  if (ACCESS_LOG) log('REQ ' + String(req.method) + ' ' + String(req.url) + ' -> ' + res.statusCode + ' <- ' + ip);
 }
 
 function onClientError(err, sock) { try { sock.destroy(); } catch (e) {} }
