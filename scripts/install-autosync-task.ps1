@@ -16,7 +16,11 @@ $node = (Get-Command node -ErrorAction SilentlyContinue).Source
 if (-not $node) { $node = 'D:\node-v\node.exe' }
 $script = Join-Path $Root 'scripts\auto-sync.js'
 
-$action = New-ScheduledTaskAction -Execute $node -Argument ('"' + $script + '" --once') -WorkingDirectory $Root
+# 走 wrapper：它负责把 token 注入环境（计划任务环境里通常没有 CODEX_HOME）
+$wrapper = Join-Path $Root 'scripts\autosync-once.ps1'
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' `
+          -Argument ('-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $wrapper + '"') `
+          -WorkingDirectory $Root
 $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2) -RepetitionInterval (New-TimeSpan -Minutes $Minutes)
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 5)
 $principal = New-ScheduledTaskPrincipal -UserId ($env:USERDOMAIN + '\' + $env:USERNAME) -LogonType Interactive -RunLevel Limited

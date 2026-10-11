@@ -50,13 +50,21 @@ function git(args, opts) {
 
 function readToken() {
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN.trim();
-  // 注意：token 绝不放进仓库目录，只放在仓库外（CODEX_HOME/work/tools）
-  const home = process.env.CODEX_HOME;
-  if (home) {
-    const p2 = path.join(home, 'work', 'tools', 'gh-token.json');
-    if (fs.existsSync(p2)) {
-      try { return JSON.parse(fs.readFileSync(p2, 'utf8').replace(/^\uFEFF/, '')).access_token; } catch (e) {}
-    }
+  // token 绝不放进仓库目录，只放仓库外。查找顺序：
+  //   ① GITHUB_TOKEN 环境变量  ② GITHUB_TOKEN_FILE 指定的文件
+  //   ③ %USERPROFILE%\.yunshudu\gh-token.txt（推荐，最稳）
+  //   ④ %CODEX_HOME%\work\tools\gh-token.json
+  const cands = [];
+  if (process.env.GITHUB_TOKEN_FILE) cands.push(process.env.GITHUB_TOKEN_FILE);
+  if (process.env.USERPROFILE) cands.push(path.join(process.env.USERPROFILE, '.yunshudu', 'gh-token.txt'));
+  if (process.env.CODEX_HOME) cands.push(path.join(process.env.CODEX_HOME, 'work', 'tools', 'gh-token.json'));
+  for (const p of cands) {
+    if (!fs.existsSync(p)) continue;
+    try {
+      const raw = fs.readFileSync(p, 'utf8').replace(/^\uFEFF/, '').trim();
+      if (raw.startsWith('{')) { const j = JSON.parse(raw); if (j.access_token) return j.access_token; }
+      else if (raw) return raw;
+    } catch (e) {}
   }
   return null;
 }
