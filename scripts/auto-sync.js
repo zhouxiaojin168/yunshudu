@@ -78,6 +78,25 @@ function remoteUrl() {
   return (r.stdout || '').trim();
 }
 
+/* ---- push 成功后立刻「戳」服务器执行部署（服务器侧也有 2 分钟轮询兜底） ---- */
+const DEPLOY_POKE = (process.env.DEPLOY_POKE || 'on') !== 'off';
+function pokeDeploy() {
+  if (!DEPLOY_POKE) return;
+  const script = path.join(ROOT, 'deploy', 'poke-deploy.ps1');
+  if (!fs.existsSync(script)) return;
+  const h = git(['rev-parse', 'HEAD']);
+  const sha = (h.stdout || '').trim();
+  if (!sha) return;
+  log('  🚀 触发服务器部署 poke…');
+  const pr = spawnSync('powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-ExpectSha', sha],
+    { cwd: ROOT, encoding: 'utf8', timeout: 300000 });
+  const out = ((pr.stdout || '') + (pr.stderr || '')).split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+  out.slice(-4).forEach(l => log('    poke | ' + l));
+  if (pr.status === 0) log('  🚀 服务器已部署到 ' + sha.slice(0, 7));
+  else log('  ⚠ poke 未确认（服务器侧 2 分钟轮询会自愈）');
+}
+
 /* ---- 敏感信息自检：命中就中止本次推送 ---- */
 const GUARD_SELF = ['scripts/auto-sync.js'];
 const NEVER_TRACK = ['runtime/github-token.txt', 'runtime/credentials.txt', 'runtime/test-token.txt'];
@@ -160,6 +179,7 @@ function doSync(reason) {
       r = git(['-c', 'credential.helper=', '-c', `http.proxy=${PROXY}`, 'push', pushUrl, 'main:main'],
               { env: Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }) });
       if (r.status === 0) { lastPushAt = Date.now(); log('  ✅ pushed -> ' + `https://github.com/${m[1]}/${m[2]}`); }
+      if (r.status === 0) pokeDeploy();
       else log('  ❌ push 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
     }
   }
