@@ -10,7 +10,12 @@
  *   2) git add -A -> 没变化就跳过
  *   3) 敏感信息自检（命中 sk-xxx / password: / access_token: 直接中止，不推）
  *   4) git commit -> git push
- *   5) ★ 收尾补同步：若仍有未同步改动（例如改动刚好落在 mute 窗内被吞），立刻补一次
+ *   5) 收尾：同步期间到达的事件不会丢（pendingAgain），结束后立刻补一轮；
+ *      同时再查一次 git status，仍有改动也补一轮
+ *
+ * ★ 为什么不用「按时间静默(mute)」：那会吞掉落在静默窗内的真实改动（实测踩过）。
+ *   这里改为「同步中收到事件 -> 记 pendingAgain -> 结束后立即补一轮」，
+ *   由于 build-site-json 是幂等的，自己写自己的那次会在第二轮判为「没有新变化」自然收敛。
  *
  * token 读取顺序：环境变量 GITHUB_TOKEN > GITHUB_TOKEN_FILE > %USERPROFILE%\.yunshudu\gh-token.txt > $CODEX_HOME/work/tools/gh-token.json
  */
@@ -29,9 +34,10 @@ const ONCE = argv.includes('--once');
 const argOf = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? Number(argv[i + 1]) : dflt; };
 const DEBOUNCE_MS = argOf('--debounce', 8) * 1000;
 const INTERVAL_MS = argOf('--interval', 300) * 1000;
-let muteUntil = 0;   // 同步期间自己写文件产生的 watch 事件，直接忽略
-let lastPushAt = 0;  // 上次推送成功时间（无新提交时的推送节流）
-let followUps = 0;   // 连续补同步次数（防止异常情况下无限补）
+
+let syncing = false;      // 串行锁
+let pendingAgain = false; // 同步期间到达的事件（不丢）
+let lastPushAt = 0;       // 上次推送成功时间（无新提交时的推送节流）
 
 fs.mkdirSync(LOGD, { recursive: true });
 
@@ -113,7 +119,12 @@ function isDirty() {
 }
 
 function sync(reason) {
-  muteUntil = Date.now() + 5000;   // 同步期间屏蔽自触发
+  if (syncing) { pendingAgain = true; log(`  上一轮同步仍在进行，本次排队（${reason}）`); return; }
+  syncing = true;
+  try { doSync(reason); } finally { syncing = false; }
+}
+
+function doSync(reason) {
   log(`同步开始（${reason}）`);
   rebuildSnapshot();
 
@@ -132,15 +143,13 @@ function sync(reason) {
     r = git(['commit', '-m', msg]);
     if (r.status !== 0) return log('  commit 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
     log('  committed: ' + msg);
-    followUps = 0;
   } else {
-    if (Date.now() - lastPushAt < 5 * 60 * 1000) { log('  没有新变化，且刚推过，跳过'); }
+    if (Date.now() - lastPushAt < 5 * 60 * 1000) log('  没有新变化，且刚推过，跳过');
     else log('  没有新变化（兜底推一次，保证之前失败的能自愈）');
   }
 
   const tok = readToken();
   const url = remoteUrl();
-  let pushed = false;
   if (!tok || !url) {
     log('  ⚠ 缺少 token 或 remote，已提交但未推送');
   } else {
@@ -150,30 +159,14 @@ function sync(reason) {
       const pushUrl = `https://${m[1]}:${tok}@github.com/${m[1]}/${m[2]}.git`;
       r = git(['-c', 'credential.helper=', '-c', `http.proxy=${PROXY}`, 'push', pushUrl, 'main:main'],
               { env: Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }) });
-      if (r.status === 0) { lastPushAt = Date.now(); pushed = true; log('  ✅ pushed -> ' + `https://github.com/${m[1]}/${m[2]}`); }
+      if (r.status === 0) { lastPushAt = Date.now(); log('  ✅ pushed -> ' + `https://github.com/${m[1]}/${m[2]}`); }
       else log('  ❌ push 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
     }
   }
-
-  /* ★ 收尾补同步：同步期间（mute 窗内）如果又落了新改动，刚才的 watch 事件会被吞，
-     这里主动检查一次工作区；仍有未同步内容就补一轮，避免要等 300s 兜底。
-     连续补同步最多 2 次，防止异常情况下打转。 */
-  if (!ONCE && isDirty()) {
-    if (followUps < 2) {
-      followUps++;
-      log(`  仍有未同步改动，${DEBOUNCE_MS / 1000}s 后补同步（第 ${followUps} 次）`);
-      setTimeout(() => sync('收尾补同步'), DEBOUNCE_MS);
-    } else {
-      log('  ⚠ 连续补同步已达上限，交回兜底定时器');
-    }
-  } else if (!ONCE) {
-    followUps = 0;
-  }
-  return pushed;
 }
 
 /* ---------- 主流程 ---------- */
-if (ONCE) { sync('--once'); process.exit(0); }
+if (ONCE) { pendingAgain = false; sync('--once'); process.exit(0); }
 
 log(`监听启动：${ROOT}`);
 log(`  防抖 ${DEBOUNCE_MS / 1000}s ｜ 兜底定时 ${INTERVAL_MS ? INTERVAL_MS / 1000 + 's' : '关闭'} ｜ 日志 runtime/logs/auto-sync.log`);
@@ -184,7 +177,12 @@ let pending = false;
 function bump(why) {
   pending = true;
   if (timer) clearTimeout(timer);
-  timer = setTimeout(() => { pending = false; sync('文件变化'); }, DEBOUNCE_MS);
+  timer = setTimeout(() => {
+    pending = false;
+    sync('文件变化');
+    // 本轮结束后，如果同步期间还有事件，补一轮（避免 300s 兜底前干等）
+    if (pendingAgain) { pendingAgain = false; log('  同步期间有新改动 -> 立刻补一轮'); setTimeout(() => sync('补同步'), 1500); }
+  }, DEBOUNCE_MS);
 }
 
 const SKIP = [path.sep + '.git' + path.sep, path.sep + 'runtime' + path.sep, path.sep + 'node_modules' + path.sep];
@@ -194,7 +192,7 @@ try {
     const full = path.sep + name;
     if (SKIP.some(s => full.includes(s))) return;
     if (name.endsWith('.log') || name.endsWith('.pid') || name.endsWith('.tmp')) return;
-    if (Date.now() < muteUntil) return;   // 自己刚写过的文件，别自触发
+    if (syncing) { pendingAgain = true; return; }   // 同步中：记下来，结束后补一轮
     bump(name);
   });
   log('  fs.watch 已挂载（recursive）');
@@ -203,7 +201,7 @@ try {
 }
 
 if (INTERVAL_MS > 0) {
-  setInterval(() => { if (!pending) sync('兜底定时'); }, INTERVAL_MS);
+  setInterval(() => { if (!pending && !syncing) sync('兜底定时'); }, INTERVAL_MS);
 }
 
 process.on('SIGINT', () => { log('收到退出信号，收尾一次'); sync('退出前'); process.exit(0); });
