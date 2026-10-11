@@ -187,9 +187,8 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "★沙箱上游（仅演练）：模拟官方「钱包/签到/出片」，用来证明 客户端 -> 渠道 -> 平台池 -> 上游 整条链在服务器上跑通。接真实上游后停掉它即可。",
-      "restartOnDeploy": true,
-      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+      "note": "★沙箱上游（仅演练，临时保留）：阶段B 会从清单里摘掉。",
+      "restartOnDeploy": true
     },
     {
       "name": "h3-platform-pool",
@@ -208,11 +207,11 @@
       ],
       "env": {
         "H3P_PORT": "9940",
-        "H3P_UPSTREAM": "http://127.0.0.1:9941",
         "H3P_DB": "C:\\yunshudu\\data\\h3pool.db",
         "H3P_CHECKIN_MS": "60000",
         "H3P_DAILY_CREDITS": "300",
-        "H3P_ADAPTER_FILE": "C:\\yunshudu\\app\\config\\pool-adapter.json"
+        "H3P_ADAPTER_FILE": "C:\\yunshudu\\app\\config\\pool-adapter.json",
+        "H3P_UPSTREAM": "http://127.0.0.1:9941"
       },
       "envFrom": {
         "H3P_ADMIN_KEY": "H3P_ADMIN_KEY"
@@ -225,7 +224,7 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "账号池引擎（服务端账号池）：把 N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。换上游只改 config/pool-adapter.json 或 H3P_UPSTREAM；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。",
+      "note": "账号池引擎（服务端账号池）：N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。上游接口全在 config/pool-adapter.real.json 里（base/path/auth/map），换上游不动代码；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
@@ -255,7 +254,8 @@
         "SUPP_LOG_FILE": "C:\\yunshudu\\logs\\pool-supply.log"
       },
       "envFrom": {
-        "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY"
+        "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY",
+        "SUPP_ADMIN_KEY": "H3P_ADMIN_KEY"
       },
       "health": {
         "kind": "http",

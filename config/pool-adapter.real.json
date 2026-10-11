@@ -1,0 +1,43 @@
+{
+  "_note": "真上游接入点：服务器上池子读的就是这个文件（services.json 里 H3P_ADAPTER_FILE 指向它）。base/path/map 换成真上游的值即可，代码不用改。",
+  "_howto": [
+    "1) 用探针自动生成：node scripts/probe-upstream.js --base <上游base> --token <账号token> --all --out config/pool-adapter.real.json",
+    "2) 或手工改下面的 base / 3 个 path / map（map 支持 a.b.c 路径）",
+    "3) 改完提交 -> 自动部署，或直接在服务器改 C:\\yunshudu\\app\\config\\pool-adapter.real.json 后重启 yunshudu-h3pool 任务"
+  ],
+  "name": "real-upstream",
+  "base": "https://REPLACE-ME.example.com",
+  "auth": {
+    "type": "bearer",
+    "field": "token"
+  },
+  "endpoints": {
+    "wallet": {
+      "method": "POST",
+      "path": "/official/v2/wallet",
+      "map": {
+        "credits": "balance"
+      }
+    },
+    "checkin": {
+      "method": "POST",
+      "path": "/official/v2/checkin",
+      "map": {
+        "credits_before": "before",
+        "credits_after": "after",
+        "delta": "delta"
+      }
+    },
+    "task": {
+      "method": "POST",
+      "path": "/official/v2/task",
+      "map": {
+        "task_id": "task_id",
+        "result_url": "video_url",
+        "wallet_before": "wallet.before",
+        "wallet_after": "wallet.after",
+        "delta": "wallet.delta"
+      }
+    }
+  }
+}
