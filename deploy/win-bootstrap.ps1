@@ -1,4 +1,4 @@
-<#
+﻿<#
   win-bootstrap.ps1 -- 新服务器第一枪（在 RDP 会话里跑一次）
     作用：打开 WinRM(5985, Basic+AllowUnencrypted) + 去掉防火墙 profile 限制 + 探测外网可达性
     产出：C:\yunshudu\bootstrap.log、C:\yunshudu\bootstrap.done
