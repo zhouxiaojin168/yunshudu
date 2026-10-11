@@ -144,7 +144,7 @@ function doSync(reason) {
     if (r.status !== 0) return log('  commit 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
     log('  committed: ' + msg);
   } else {
-    if (Date.now() - lastPushAt < 5 * 60 * 1000) log('  没有新变化，且刚推过，跳过');
+    if (Date.now() - lastPushAt < 5 * 60 * 1000) return log('  没有新变化，且刚推过，跳过');
     else log('  没有新变化（兜底推一次，保证之前失败的能自愈）');
   }
 
