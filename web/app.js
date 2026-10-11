@@ -5,9 +5,12 @@
   'use strict';
 
   var SNAP = JSON.parse(document.getElementById('snapshot').textContent || '{}');
-  var LIVE_BASE = (location.protocol === 'http:' || location.protocol === 'https:')
-    ? ''                                   // 由 serve-web.js 同源代理 /api
-    : 'http://127.0.0.1:3300';             // 直接双击打开时，指向本地网关
+  // 数据源：① index.html 里的 window.__API_BASE__ ② 同源 /api 反代 ③ 本地网关
+  var LIVE_BASE = (typeof window.__API_BASE__ === 'string' && window.__API_BASE__)
+    ? window.__API_BASE__.replace(/\/+$/, '')
+    : ((location.protocol === 'http:' || location.protocol === 'https:')
+        ? ''                               // 由 serve-web.js 同源代理 /api
+        : 'http://127.0.0.1:3300');        // 直接双击打开时，指向本地网关
 
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) {
@@ -175,6 +178,9 @@
     }).catch(function (e) {
       btn.textContent = '拉取失败';
       setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
+      // 连不上网关时退回离线快照模式
+      var off = $('liveDot'); if (off) off.className = 'dot off';
+      var lt = $('liveText'); if (lt) lt.textContent = '离线快照 · 未连接网关（' + (LIVE_BASE || '同源') + '）';
       console.warn('live refresh failed:', e.message);
     });
   }

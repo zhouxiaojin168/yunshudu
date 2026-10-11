@@ -65,6 +65,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-web.ps1
 ![门户预览](./docs/portal-preview.png)
 
 > 仓库存的是**门户源码**；站点的"真身"是 new-api 网关（它是完整的管理前台 + API）。
+
+### 在线地址（GitHub Pages）
+
+```text
+https://zhouxiaojin168.github.io/yunshudu/
+```
+
+仓库转 public 后由 `.github/workflows/pages.yml` 自动部署 `web/` 目录。
+
+线上页面连不上本地网关，所以显示的是**内嵌快照**。要让它实时拉数据，
+把 `web/index.html` 里的 `window.__API_BASE__` 填成你的**公网 https 网关地址**即可：
+
+```html
+<script>window.__API_BASE__ = 'https://你的网关域名';</script>
+```
 > 门户负责品牌、价目、接入文档与机制展示。
 
 ---
