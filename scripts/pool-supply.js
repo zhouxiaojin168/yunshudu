@@ -89,6 +89,7 @@ async function poolReq(method, p, body) {
 }
 const poolStats = () => poolReq('GET', '/pool/stats');
 const poolAdd = (acct) => poolReq('POST', '/pool/accounts', acct);
+const poolBulk = (accounts) => poolReq('POST', '/pool/accounts/bulk', { accounts: accounts });
 const poolCheckin = () => poolReq('POST', '/pool/checkin', {});
 
 function healthyCount(st) {
@@ -117,9 +118,13 @@ async function refillFromFarm(n) {
   const st = await poolStats();
   const have = new Set((st.json.accounts || []).map((a) => String(a.token)));
   const fresh = all.filter((a) => a && a.token && !have.has(String(a.token)));
-  let added = 0;
-  for (const a of fresh.slice(0, n)) {
-    const r = await poolAdd({ label: a.label || ('farm-' + (added + 1)), token: a.token, credits: Number(a.credits || 0) });
+  if (!fresh.length) return 0;
+  const batch = fresh.slice(0, n).map((a, i) => ({ label: a.label || ('farm-' + (i + 1)), token: a.token, credits: Number(a.credits || 0) }));
+  const bulk = await poolBulk(batch);
+  if (bulk.status === 200) return Number(bulk.json.imported || 0);
+  let added = 0;  // 池子太老没有 /pool/accounts/bulk -> 退回单条
+  for (const a of batch) {
+    const r = await poolAdd(a);
     if (r.status === 200) added++;
   }
   return added;
@@ -314,7 +319,9 @@ const server = http.createServer(async (req, res) => {
       const body = await readBody(req);
       const list = Array.isArray(body.accounts) ? body.accounts : [];
       let ok = 0;
-      for (const a of list) { const r = await poolAdd(a); if (r.status === 200) ok++; }
+      const bulk = list.length ? await poolBulk(list) : { status: 0, json: {} };
+      if (bulk.status === 200) ok = Number(bulk.json.imported || 0);
+      else for (const a of list) { const r = await poolAdd(a); if (r.status === 200) ok++; }
       state.imported += ok; saveState();
       return send(res, 200, { ok: true, imported: ok, total: list.length });
     }

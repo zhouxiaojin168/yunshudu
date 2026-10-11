@@ -71,6 +71,19 @@ const server = http.createServer(async (req, res) => {
     a.credits = Math.min(a.cap === undefined ? 1e9 : a.cap, a.credits + DAY_CREDITS);
     return send(res, 200, { token: a.token, before, after: a.credits, delta: a.credits - before });
   }
+  /* 本地演练专用：模拟「注册成功发号」（真上游这里是一条 注册 接口 -> 返回账号 token） */
+  if (req.method === 'POST' && url === '/official/v2/dev/send-code') {
+    return send(res, 200, { ok: true, code_sent: true, phone: String(body.phone || '') });
+  }
+  if (req.method === 'POST' && url === '/official/v2/dev/register') {
+    seq += 1;
+    const tk = 'off-acct-' + String(seq).padStart(5, '0');
+    const a = acct(tk);
+    a.credits = Number(body.credits !== undefined ? body.credits : DAY_CREDITS);
+    if (body.cap !== undefined) a.cap = Number(body.cap);
+    a.valid = true;
+    return send(res, 200, { ok: true, data: { token: tk, account_id: tk, balance: a.credits } });
+  }
   if (req.method === 'POST' && url === '/official/v2/upload') {
     seq += 1;
     return send(res, 200, { object: 'file', id: 'md-' + String(seq).padStart(4, '0'), bytes: (body.data || '').length });

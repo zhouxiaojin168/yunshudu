@@ -16,5 +16,9 @@ __pycache__/
 *.tmp
 .DS_Store
 Thumbs.db
+# ---- 账号池运行态/私密数据：绝不入库 ----
+state/
+config/*.local.json
+
 # ---- 临时调试脚本 ----
 scripts/_dbg-*.js

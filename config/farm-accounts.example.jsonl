@@ -1,0 +1,4 @@
+# 农场文件模板：每行一个 JSON，代表一个「已养好的上游账号」
+# 真实文件放 state/farm-accounts.jsonl（state/ 已在 .gitignore，不会入库）
+{"label":"farm-01","token":"<上游账号token>","credits":0}
+{"label":"farm-02","token":"<上游账号token>","credits":0}

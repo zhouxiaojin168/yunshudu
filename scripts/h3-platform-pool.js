@@ -165,6 +165,8 @@ async function syncWallet(acct) {
       db.prepare('UPDATE accounts SET credits=? WHERE id=?').run(bal, acct.id);
       return bal;
     }
+    /* 探余额就 401/403 => 这个号已经死了，直接下掉，别让池子虚胖 */
+    if (w.status === 401 || w.status === 403) disableAccount(acct, 'WALLET_AUTH_FAILED');
   } catch (e) {}
   return null;
 }
@@ -187,6 +189,25 @@ function fattestAvailable() {
 }
 const hold = (acct, need) => db.prepare('UPDATE accounts SET held=held+?, inflight=inflight+1 WHERE id=?').run(need, acct.id);
 const release = (acct, need) => db.prepare('UPDATE accounts SET held=MAX(held-?,0), inflight=MAX(inflight-1,0) WHERE id=?').run(need, acct.id);
+
+/* 供给层共用：插入/更新一个上游账号（token 必填；credits<=0 时标记 probed 交给调用方探余额） */
+function insertAccount(inp, requireToken) {
+  const o = inp || {};
+  const label = String(o.label || 'acct');
+  let token = String(o.token || '').trim();
+  if (!token) {
+    if (requireToken) return { skipped: true, reason: 'token_required' };
+    token = 'tk_' + crypto.randomBytes(4).toString('hex');
+  }
+  const exists = db.prepare('SELECT id FROM accounts WHERE token=?').get(token);
+  if (exists && !o.overwrite) return { skipped: true, reason: 'exists' };
+  const credits = Number(o.credits || 0);
+  const cap = Number(o.cap || ACCOUNT_CAP) || ACCOUNT_CAP;
+  db.prepare('INSERT OR REPLACE INTO accounts (label,token,credits,held,cap,last_checkin_at,healthy,cooldown_until,fail_reason,checkin_count,inflight,success_count,created_at) VALUES (?,?,?,0,?,?,1,0,NULL,0,0,0,?)')
+    .run(label, token, credits, cap, now(), now());
+  const row = db.prepare('SELECT * FROM accounts WHERE token=?').get(token);
+  return { id: row ? row.id : null, token: token, label: label, credits: credits, cap: cap, probed: credits <= 0 };
+}
 function disableAccount(acct, reason) {
   db.prepare('UPDATE accounts SET healthy=0, fail_reason=? WHERE id=?').run(reason, acct.id);
   audit(acct.id, null, 'account_disabled', undefined, undefined, reason);
@@ -464,12 +485,25 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
     if (req.method === 'POST' && url === '/pool/accounts') {
-      const label = String(body.label || 'acct');
-      const token = String(body.token || ('tk_' + crypto.randomBytes(4).toString('hex')));
-      const credits = Number(body.credits || 0);
-      db.prepare('INSERT OR REPLACE INTO accounts (label,token,credits,held,cap,last_checkin_at,healthy,cooldown_until,fail_reason,checkin_count,inflight,success_count,created_at) VALUES (?,?,?,0,?,?,1,0,NULL,0,0,0,?)')
-        .run(label, token, credits, ACCOUNT_CAP, now(), now());
-      return send(res, 200, { ok: true, token, label, credits });
+      const r = insertAccount(body, false);
+      if (r.skipped) return send(res, 400, { ok: false, code: 'bad_account', reason: r.reason });
+      if (r.probed) { const row = db.prepare('SELECT * FROM accounts WHERE id=?').get(r.id); const bal = await syncWallet(row); if (bal !== null) r.credits = bal; }
+      return send(res, 200, { ok: true, id: r.id, token: r.token, label: r.label, credits: r.credits, probed: r.probed });
+    }
+    if (req.method === 'POST' && url === '/pool/accounts/bulk') {
+      const arr = Array.isArray(body.accounts) ? body.accounts : [];
+      if (!arr.length) return send(res, 400, { ok: false, code: 'no_accounts' });
+      let imported = 0, skipped = 0, probed = 0; const newIds = [];
+      for (const a0 of arr) {
+        const r = insertAccount(a0, true);
+        if (r.skipped) { skipped++; continue; }
+        imported++; probed += r.probed ? 1 : 0; newIds.push(r.id);
+      }
+      for (const id of newIds) {
+        const row = db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
+        if (row && Number(row.credits) === 0) await syncWallet(row);
+      }
+      return send(res, 200, { ok: true, total: arr.length, imported, skipped, probed, accounts: listAccounts() });
     }
     if (req.method === 'POST' && url === '/pool/checkin') { await checkinTick(true); return send(res, 200, { ok: true, accounts: listAccounts() }); }
     if (req.method === 'POST' && url === '/pool/keys') {

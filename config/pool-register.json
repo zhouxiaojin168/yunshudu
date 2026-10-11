@@ -1,0 +1,60 @@
+{
+  "_note": "补号源② 注册工作流（模板）。把 base 与各 path 换成目标上游真实接口即可，代码不用改。接码平台由环境变量 SUPP_SMS_GET / SUPP_SMS_POLL / SUPP_SMS_KEY 提供。",
+  "_vars": "步骤里 {{name}} 会被替换为前面步骤 save 出来的变量；type=emit 决定最终写入池子的账号字段（必须有 token）。",
+  "base": "https://upstream.example.com",
+  "project": "your-sms-project-id",
+  "steps": [
+    {
+      "name": "取号",
+      "type": "sms-get",
+      "project": "your-sms-project-id",
+      "save_phone": "phone",
+      "save_id": "phone_id"
+    },
+    {
+      "name": "发验证码",
+      "type": "http",
+      "method": "POST",
+      "path": "/api/account/send-code",
+      "body": {
+        "phone": "{{phone}}"
+      },
+      "expect": 200
+    },
+    {
+      "name": "等短信",
+      "type": "sleep",
+      "ms": 1500
+    },
+    {
+      "name": "收验证码",
+      "type": "sms-wait",
+      "from": "phone_id",
+      "save": "code"
+    },
+    {
+      "name": "提交注册",
+      "type": "http",
+      "method": "POST",
+      "path": "/api/account/register",
+      "body": {
+        "phone": "{{phone}}",
+        "code": "{{code}}"
+      },
+      "save": {
+        "token": "data.token",
+        "label": "data.account_id"
+      },
+      "expect": 200
+    },
+    {
+      "name": "整理账号",
+      "type": "emit",
+      "as": {
+        "token": "{{token}}",
+        "label": "reg-{{phone}}",
+        "credits": 0
+      }
+    }
+  ]
+}
