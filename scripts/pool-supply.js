@@ -24,6 +24,7 @@
  *     SUPP_SMS_POLL        接码「查码」URL 模板（含 {id}）
  *     SUPP_SMS_KEY         接码平台 key（会以 &key= 拼到上面的 URL）
  *     SUPP_SMS_WAIT_MS     查码最长等待（默认 60000）
+ *     SUPP_SMS_HEADERS    额外请求头 JSON，如 {"Authorization":"Bearer xxx"}（5sim 这类必须）
  *     SUPP_INTERVAL_MS     守护循环间隔（默认 60000）
  *     SUPP_CHECKIN_EVERY   每 N 轮做一次全池签到（默认 10）
  *     SUPP_REFILL_BATCH    每次补号数量（默认 3）
@@ -134,37 +135,50 @@ async function refillFromFarm(n) {
 }
 
 /* ------------------------- 补号源②：接码平台 ------------------------- */
+const smsAdapter = require('./sms-adapter');
+
+/* 额外请求头：SUPP_SMS_HEADERS='{"Authorization":"Bearer xxx"}'（5sim 这类要 Bearer 的平台用得上） */
+let SMS_HEADERS = {};
+try {
+  if (process.env.SUPP_SMS_HEADERS) SMS_HEADERS = JSON.parse(process.env.SUPP_SMS_HEADERS) || {};
+} catch (e) { SMS_HEADERS = {}; }
+
 function tpl(url, vars) {
   let out = String(url);
-  Object.keys(vars || {}).forEach((k) => { out = out.split('{' + k + '}').join(encodeURIComponent(String(vars[k]))); });
-  if (SMS_KEY) out += (out.indexOf('?') >= 0 ? '&' : '?') + 'key=' + encodeURIComponent(SMS_KEY);
+  const usedKeySlot = out.indexOf('{key}') >= 0;
+  const all = Object.assign({}, vars || {});
+  if (SMS_KEY) all.key = SMS_KEY;   // 模板里写 {key} 可把 key 放到任意位置（api_key=/token=/apikey=）
+  Object.keys(all).forEach((k) => { out = out.split('{' + k + '}').join(encodeURIComponent(String(all[k]))); });
+  if (SMS_KEY && !usedKeySlot) out += (out.indexOf('?') >= 0 ? '&' : '?') + 'key=' + encodeURIComponent(SMS_KEY);
   return out;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function smsGetPhone(project) {
   if (!SMS_GET) throw new Error('未配置 SUPP_SMS_GET（接码取号接口）');
-  const r = await fetch(tpl(SMS_GET, { project: project || '' }));
+  const url = tpl(SMS_GET, { project: project || '' });
+  const r = await fetch(url, { headers: SMS_HEADERS });
   const t = await r.text();
-  let j = null; try { j = JSON.parse(t); } catch (e) {}
-  const phone = (j && (j.phone || (j.data && j.data.phone))) || (t.match(/1[3-9][0-9]{9}/) || [])[0];
-  const id = (j && (j.id || j.phone_id || (j.data && j.data.id))) || phone;
-  if (!phone || !id) throw new Error('取号失败: ' + t.slice(0, 200));
-  return { phone: String(phone), id: String(id) };
+  const got = smsAdapter.parsePhone(t);
+  if (r.status !== 200) throw new Error('取号 HTTP ' + r.status + ': ' + t.slice(0, 200));
+  if (!got.phone) throw new Error('取号失败: ' + (got.error || t.slice(0, 200)));
+  return { phone: got.phone, id: got.id || got.phone };
 }
 
 async function smsWaitCode(id) {
   if (!SMS_POLL) throw new Error('未配置 SUPP_SMS_POLL（接码查码接口）');
   const deadline = Date.now() + SMS_WAIT_MS;
+  let last = '';
   while (Date.now() < deadline) {
-    const r = await fetch(tpl(SMS_POLL, { id: id }));
+    const r = await fetch(tpl(SMS_POLL, { id: id }), { headers: SMS_HEADERS });
     const t = await r.text();
-    let j = null; try { j = JSON.parse(t); } catch (e) {}
-    const code = (j && (j.code || (j.data && j.data.code))) || (t.match(/\b[0-9]{4,6}\b/) || [])[0];
-    if (code && String(code) !== '0') return String(code);
+    last = t;
+    const p = smsAdapter.parseCode(t);
+    if (p.code) return p.code;
+    if (p.terminal) throw new Error('接码失败: ' + (p.error || t.slice(0, 120)));
     await sleep(3000);
   }
-  throw new Error('等验证码超时 id=' + id);
+  throw new Error('等验证码超时 id=' + id + ' 最后响应: ' + String(last).slice(0, 120));
 }
 
 /* ------------------------- 补号源②：注册工作流引擎 ------------------------- */
