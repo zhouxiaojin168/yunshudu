@@ -5,6 +5,9 @@
     之后所有部署动作都通过 WinRM 远程完成，不再需要 RDP 手工操作。
 #>
 $ErrorActionPreference = 'Continue'
+# Server 2012R2 默认不开 TLS1.2，不设这一行所有 https 探测都会 FAIL
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls11 -bor [Net.SecurityProtocolType]::Tls } catch {}
+$ProgressPreference = 'SilentlyContinue'
 $Root = 'C:\yunshudu'
 $log  = Join-Path $Root 'bootstrap.log'
 New-Item -ItemType Directory -Force -Path $Root | Out-Null
@@ -68,5 +71,6 @@ try { L ('ram = ' + [math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPh
 try { L ('git = ' + ((& git --version) -join '')) } catch { L 'git = none' }
 try { L ('node = ' + ((& node --version) -join '')) } catch { L 'node = none' }
 try { L ('powershell7 = ' + ((& pwsh -Version) -join '')) } catch { L 'pwsh = none' }
+try { L ('wsmancfg = ' + ((& winrm get winrm/config/service) -join ' ')) } catch {}
 L '=== DONE ==='
 Set-Content -LiteralPath (Join-Path $Root 'bootstrap.done') -Value (Get-Date -Format o) -Encoding UTF8
