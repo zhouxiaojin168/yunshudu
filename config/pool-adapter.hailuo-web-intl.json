@@ -1,0 +1,43 @@
+{
+  "_note": "乙路-海外站（hailuoai.video，build prod-en-0.1.881）：与国内站**同一套签名**（header token + header yy + 公共参数），只是 base 不同、计价 $、模型更多。账号 token 形如 \"<_token>|<uuid>|<device_id>\"。R87 已用真号在 hayluoai.video 上跑通 7 接口。",
+  "_verify": [
+    "★R87 生产实测（海外真号，7/7 HTTP 200 code=0）：hailuo-sign.js 同一签名器在 hailuoai.video 上直接可用（只换 base）。",
+    "★与国内站差异：①计价 $（credit_combo: $5→500 credit ⇒ $0.01/credit）②新人礼 **150 credits**（国内 80 贝壳），到期 1792022399999=2026-10-14 23:59 UTC ③模型 22 个（国内 13 个）",
+    "★海外站独有模型（国内站没有）：nano-banana2(1 credit, 1K/2K/4K)、seedream-4.5(1, 2K/4K)、gpt-image-1.5(1, Low/Med/High→4/8/15)、veo3.1-t2v/i2v/s2v/t2v-fast(会员,100~200)、sora2-t2v/i2v(会员,120)",
+    "信用同国内：image-01=1 credit；H3 视频 23218=12~15、23200/23204/23210/23217=25/80/50、23210 唯一 supportFrame=true。",
+    "免费档注意：veo3.1*/sora2* 的 isMember=true ⇒ 免费号不可用，要会员档（Standard $10.50/月 起）。",
+    "task 字段名仍待真号确认（node scripts/probe-hailuo.js --base https://hailuoai.video --token ... --gen，约 1 credit）"
+  ],
+  "name": "hailuo-web-intl",
+  "base": "https://hailuoai.video",
+  "auth": {
+    "type": "hailuo_web"
+  },
+  "endpoints": {
+    "wallet": {
+      "method": "GET",
+      "path": "/v1/api/billing/credit",
+      "map": {
+        "credits": "data.total_credit"
+      }
+    },
+    "checkin": {
+      "method": "GET",
+      "path": "/v1/api/billing/credit",
+      "map": {
+        "credits_after": "data.total_credit",
+        "credits_before": "data.total_credit"
+      }
+    },
+    "task": {
+      "method": "POST",
+      "path": "/v2/api/multimodal/generate/image",
+      "map": {
+        "task_id": "data.taskID",
+        "result_url": "data.fileURL",
+        "wallet_before": "data.creditBefore",
+        "wallet_after": "data.creditAfter"
+      }
+    }
+  }
+}
