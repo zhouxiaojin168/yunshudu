@@ -28,6 +28,7 @@ const ONCE = argv.includes('--once');
 const argOf = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? Number(argv[i + 1]) : dflt; };
 const DEBOUNCE_MS = argOf('--debounce', 8) * 1000;
 const INTERVAL_MS = argOf('--interval', 300) * 1000;
+let muteUntil = 0;   // 同步期间自己写文件产生的 watch 事件，直接忽略
 
 fs.mkdirSync(LOGD, { recursive: true });
 
@@ -101,6 +102,7 @@ function rebuildSnapshot() {
 }
 
 function sync(reason) {
+  muteUntil = Date.now() + 5000;   // 同步期间屏蔽自触发
   log(`同步开始（${reason}）`);
   rebuildSnapshot();
 
@@ -158,6 +160,7 @@ try {
     const full = path.sep + name;
     if (SKIP.some(s => full.includes(s))) return;
     if (name.endsWith('.log') || name.endsWith('.pid') || name.endsWith('.tmp')) return;
+    if (Date.now() < muteUntil) return;   // 自己刚写过的文件，别自触发
     bump(name);
   });
   log('  fs.watch 已挂载（recursive）');

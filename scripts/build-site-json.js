@@ -75,6 +75,17 @@ const get = async (u) => {
   };
 
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
+
+  // ★ 幂等写入：内容和上次一样（忽略 generatedAt）就不要动文件，
+  //   否则 auto-sync 会「自己改自己」形成无限提交循环。
+  const strip = (o) => { const c = JSON.parse(JSON.stringify(o)); delete c.generatedAt; return JSON.stringify(c); };
+  let prev = null;
+  try { prev = JSON.parse(fs.readFileSync(OUT, 'utf8').replace(/^\uFEFF/, '')); } catch (e) {}
+  if (prev && strip(prev) === strip(snap)) {
+    console.log('snapshot unchanged -> skip write (' + OUT + ')');
+    return;
+  }
+
   fs.writeFileSync(OUT, JSON.stringify(snap, null, 2), 'utf8');
   console.log('written -> ' + OUT);
   console.log('  site       = ' + snap.site.name + '  version=' + snap.site.version);
