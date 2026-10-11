@@ -11,7 +11,9 @@ param(
   [string]$Tag = 'type',
   [switch]$Shot,
   [switch]$UseClipboard,
-  [int]$KeyDelayMs = 30
+  [int]$KeyDelayMs = 30,
+  [switch]$ShiftFirst,
+  [switch]$CtrlSpaceFirst
 )
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
 Add-Type -Namespace PT -Name U -MemberDefinition @'
@@ -58,6 +60,8 @@ function DK([int]$vk,[int]$sc,[int]$ex) { [PT.U]::keybd_event([byte]$vk, [byte]$
 function UK([int]$vk,[int]$sc,[int]$ex) { [PT.U]::keybd_event([byte]$vk, [byte]$sc, [uint32]($ex -bor $UP), [UIntPtr]::Zero) }
 function Tap([int]$vk,[int]$sc,[int]$ex) { DK $vk $sc $ex; Start-Sleep -Milliseconds 60; UK $vk $sc $ex }
 function Combo2([int]$m,[int]$ms,[int]$v,[int]$vs) { DK $m $ms 0; Start-Sleep -Milliseconds 60; Tap $v $vs 0; UK $m $ms 0 }
+if ($ShiftFirst) { Tap 0x10 0x2A 0; Write-Host 'sent SHIFT'; Start-Sleep -Milliseconds 600 }
+if ($CtrlSpaceFirst) { Combo2 0x11 0x1D 0x20 0x39; Write-Host 'sent Ctrl+Space'; Start-Sleep -Milliseconds 600 }
 if ($WinR) {
   DK 0x5B 0x5B $EXT; Start-Sleep -Milliseconds 130
   Tap 0x52 0x13 0
