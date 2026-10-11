@@ -54,24 +54,31 @@ function check(name, cond, detail) {
   check('A3 前面的号用尽后切到 a3 继续', usedA.includes('a3@mock'), 'a3 使用次数=' + usedA.filter((x) => x === 'a3@mock').length);
 
   console.log('');
+  console.log('');
   console.log('[场景B] 429 熔断 -> 换号；冷却到期 -> 自动解禁');
-  await j(MOCK + '/internal/admin/state', { st: 'ST-a1', credits: 5, rate_limit: true });
+  // 造一个「必被优先选中」的 429 号：并发上限 -1 时排序键里 remaining=null 排最前；
+  // 另一个号给 image_concurrency=1（remaining=1）排在后面，这样命中顺序是确定的。
+  await j(POOL + '/pool/reset');
+  await j(POOL + '/pool/accounts', { st: 'ST-c1', email: 'c1@mock', credits: 5 });
+  await j(POOL + '/pool/accounts', { st: 'ST-c2', email: 'c2@mock', credits: 5, image_concurrency: 1 });
+  await j(MOCK + '/internal/admin/state', { st: 'ST-c1', credits: 5, rate_limit: true });
+  await j(MOCK + '/internal/admin/state', { st: 'ST-c2', credits: 5, rate_limit: false });
   const rB = await gen();
   const sB = await stats();
-  const a1 = acct(sB, 'a1@mock');
-  check('B1 撞 429 的号被熔断，整请求仍成功', rB.status === 200 && a1 && a1.is_active === false,
-    'HTTP=' + rB.status + '  落点=' + (rB.json.data && rB.json.data[0]._account));
-  check('B2 ban_reason=429_rate_limit（照抄源码常量）', a1 && a1.ban_reason === '429_rate_limit', 'ban_reason=' + (a1 && a1.ban_reason));
-  check('B3 冷却倒计时可见', a1 && a1.will_unban_in_s !== null, 'will_unban_in_s=' + (a1 && a1.will_unban_in_s) + 's（生产值 43200s=12h）');
+  const c1 = acct(sB, 'c1@mock');
+  check('B1 撞 429 的号被熔断，整请求仍成功（自动换到下一号）',
+    rB.status === 200 && c1 && c1.is_active === false && rB.json.data[0]._account === 'c2@mock',
+    'HTTP=' + rB.status + '  落点=' + (rB.json.data && rB.json.data[0]._account) + '  c1.is_active=' + (c1 && c1.is_active));
+  check('B2 ban_reason=429_rate_limit（照抄源码常量）', c1 && c1.ban_reason === '429_rate_limit', 'ban_reason=' + (c1 && c1.ban_reason));
+  check('B3 冷却倒计时可见', c1 && c1.will_unban_in_s !== null, 'will_unban_in_s=' + (c1 && c1.will_unban_in_s) + 's（生产值 43200s=12h）');
   const banS = sB.ban_seconds;
   console.log('  ... 等 ' + (banS + 7) + 's 观察冷却到期自动解禁 ...');
   await sleep((banS + 7) * 1000);
   const sB2 = await stats();
-  const a1b = acct(sB2, 'a1@mock');
-  check('B4 冷却到期自动解禁（12h 逻辑，测试压缩为 ' + banS + 's）', a1b && a1b.is_active === true && !a1b.ban_reason,
-    'is_active=' + (a1b && a1b.is_active) + '  ban_reason=' + (a1b && a1b.ban_reason));
+  const c1b = acct(sB2, 'c1@mock');
+  check('B4 冷却到期自动解禁（12h 逻辑，测试压缩为 ' + banS + 's）', c1b && c1b.is_active === true && !c1b.ban_reason,
+    'is_active=' + (c1b && c1b.is_active) + '  ban_reason=' + (c1b && c1b.ban_reason));
 
-  console.log('');
   console.log('[场景C] AT 剩余 < 阈值 -> 自动刷新（照抄 <3600s）');
   await j(POOL + '/pool/reset');
   await j(POOL + '/pool/accounts', { st: 'ST-b1', email: 'b1@mock', credits: 9 });
