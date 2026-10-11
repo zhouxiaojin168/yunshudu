@@ -48,7 +48,7 @@ function readToken() {
   if (home) {
     const p2 = path.join(home, 'work', 'tools', 'gh-token.json');
     if (fs.existsSync(p2)) {
-      try { return JSON.parse(fs.readFileSync(p2, 'utf8')).access_token; } catch (e) {}
+      try { return JSON.parse(fs.readFileSync(p2, 'utf8').replace(/^\uFEFF/, '')).access_token; } catch (e) {}
     }
   }
   return null;
