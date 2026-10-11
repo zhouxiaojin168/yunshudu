@@ -53,9 +53,13 @@ http.createServer(async (req, res) => {
   }
   if (bizCode) return send(res, 200, { statusInfo: { code: bizCode, httpCode: 0, message: '贝壳不足', serviceTime: Math.floor(Date.now() / 1000), requestID: 'mock-3', debugInfo: '', serverAlert: 0 } });
 
-  const data = { credit: credit };
-  if (path === '/v1/api/billing/credit') return send(res, 200, { statusInfo: { code: 0, httpCode: 0, message: 'success', serviceTime: Math.floor(Date.now() / 1000), requestID: 'mock-4', debugInfo: '', serverAlert: 0 }, data: data });
-  if (path === '/v1/api/user/equity') return send(res, 200, { statusInfo: { code: 0, httpCode: 0, message: 'success', serviceTime: Math.floor(Date.now() / 1000), requestID: 'mock-5', debugInfo: '', serverAlert: 0 }, data: data });
+  /* R81: 按真上游形状返回 —— /v1/api/billing/credit 的真实结构是 {total_credit, sub_credits:[{credit_type, credit, record}]}
+     （逆向自 cdn.hailuoai.com 前端包 js/3726-*.js 原文 `let{total_credit:e,sub_credits:a=[]}=await (0,r.c6)()`），
+     旧的 {credit} 是臆造字段，会让 map 里的 data.total_credit 取不到值。equity 保持独立形状。 */
+  const creditData = { total_credit: credit, sub_credits: credit > 0 ? [{ credit_type: 3, credit: credit, record: [] }] : [] };
+  const equityData = { credit: credit };
+  if (path === '/v1/api/billing/credit') return send(res, 200, { statusInfo: { code: 0, httpCode: 0, message: 'success', serviceTime: Math.floor(Date.now() / 1000), requestID: 'mock-4', debugInfo: '', serverAlert: 0 }, data: creditData });
+  if (path === '/v1/api/user/equity') return send(res, 200, { statusInfo: { code: 0, httpCode: 0, message: 'success', serviceTime: Math.floor(Date.now() / 1000), requestID: 'mock-5', debugInfo: '', serverAlert: 0 }, data: equityData });
   if (path === '/v2/api/multimodal/generate/image') return send(res, 200, { statusInfo: { code: 0, httpCode: 0, message: 'success', serviceTime: Math.floor(Date.now() / 1000), requestID: 'mock-6', debugInfo: '', serverAlert: 0 }, data: { taskID: 'mock-task-1', fileURL: 'https://filecdn.minimax.chat/mock/1.png' } });
   return send(res, 404, { statusInfo: { code: 404, message: 'no such path' } });
 }).listen(PORT, '127.0.0.1', () => console.log('[mock-hailuo] listening on 127.0.0.1:' + PORT));
