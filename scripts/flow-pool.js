@@ -41,7 +41,7 @@ const AT_REFRESH_MS = Number(process.env.FLOW_AT_REFRESH_SECONDS || 3600) * 1000
 const ERROR_BAN_THRESHOLD = Number(process.env.FLOW_ERROR_BAN_THRESHOLD || 5);
 const LOGF = path.join(ROOT, 'runtime', 'logs', 'flow-pool.log');
 
-const TRANSIENT = ['timed out', 'timeout', 'connection', 'curl: (', 'proxy', 'network', '502', '503', '504'];
+const TRANSIENT = ['timed out', 'timeout', 'connection', 'curl: (', 'proxy', 'network', '502', '503', '504', 'fetch failed', 'econnrefused', 'econnreset', 'socket hang up'];
 
 let bomDone = false;
 function log(s) {
@@ -179,55 +179,45 @@ function release(t, kind) {
 }
 
 /* ---------------- 主流程：取号 -> 生成（失败换号，最多 N 轮） ---------------- */
+/* ---------------- 主流程：按候选序逐个下走（照抄 flow2api 的 ordered candidates 语义） ---------------- */
+/* 修复点：每个 token 在同一请求里最多试一次；失败的号记进 tried 集合，不会再被随机挑回来。*/
 async function generate(kind, prompt) {
   const trace = [];
-  const cands = candidates(kind);
-  if (!cands.length) return { ok: false, code: 503, error: 'no_available_account', trace };
-  const maxTry = Math.min(cands.length + 2, 8);
+  const order = candidates(kind);
+  if (!order.length) return { ok: false, code: 503, error: 'no_available_account', trace };
 
-  for (let i = 0; i < maxTry; i++) {
-    const round = candidates(kind);
-    if (!round.length) break;
-    const pick = round[0];
-    const t0 = getToken(pick.t.id);
-    if (pick.remaining !== null && pick.remaining <= 0) {          // 并发槽满
-      trace.push('#' + t0.id + ' 并发槽已满(inflight=' + pick.inflight + ') -> 换号');
-      if (round.length === 1) break;
-      round.push(round.shift());                                    // 放到队尾
-      continue;
-    }
+  const tried = new Set();
+  for (const c of order) {
+    if (tried.has(c.t.id)) continue;
+    tried.add(c.t.id);
+
+    const t0 = getToken(c.t.id);
+    if (!t0 || t0.is_active !== 1) { trace.push('#' + c.t.id + ' 已不可用 -> 跳过'); continue; }
+
+    const inflight = kind === 'video' ? t0.inflight_video : t0.inflight_image;
+    const cap = kind === 'video' ? t0.video_concurrency : t0.image_concurrency;
+    if (cap >= 0 && inflight >= cap) { trace.push('#' + t0.id + ' 并发槽满 ' + inflight + '/' + cap + ' -> 跳过'); continue; }
+
     const t = await ensureValidToken(t0);
-    if (!t) { trace.push('#' + t0.id + ' AT 刷新失败 -> 换号'); continue; }
+    if (!t) { trace.push('#' + t0.id + ' AT 刷新失败 -> 跳过'); continue; }
 
     reserve(t, kind);
-    const order = candidates(kind).map(x => x.t.id).join('>');
-    log('  [PICK] ' + (kind) + ' 选中 #' + t.id + ' ' + t.email + ' 候选序=' + order);
+    const pickOrder = candidates(kind).map((x) => x.t.id).join('>');
+    log('  [PICK] ' + kind + ' 选中 #' + t.id + ' ' + t.email + '  候选序=' + pickOrder);
     const r = await up('/internal/generate', { at: t.at, prompt, kind });
     release(t, kind);
 
     if (r.status === 200) {
       recordSuccess(t);
-      db.prepare('UPDATE tokens SET credits=? WHERE id=?').run(Number(r.json.remaining ?? t.credits) , t.id);
+      db.prepare('UPDATE tokens SET credits=? WHERE id=?').run(Number(r.json.remaining !== undefined ? r.json.remaining : t.credits), t.id);
       trace.push('#' + t.id + ' 200 OK');
       return { ok: true, code: 200, account: t.email, url: r.json.url, credits: r.json.remaining, trace };
     }
-    if (r.status === 429) {
-      banFor429(t);
-      trace.push('#' + t.id + ' 429 -> 熔断换号');
-      continue;
-    }
-    if (r.status === 402) {                                        // 上游额度耗尽：与 new-api 的 402→401 同一思路
-      db.prepare('UPDATE tokens SET credits=0 WHERE id=?').run(t.id);
-      trace.push('#' + t.id + ' 402 额度耗尽 -> 换号');
-      continue;
-    }
-    if (r.status === 401) {
-      db.prepare('UPDATE tokens SET at=NULL, at_expires=NULL WHERE id=?').run(t.id);
-      trace.push('#' + t.id + ' 401 AT 失效 -> 清 AT 后换号');
-      continue;
-    }
+    if (r.status === 429) { banFor429(t); trace.push('#' + t.id + ' 429 -> 熔断换号'); continue; }
+    if (r.status === 402) { db.prepare('UPDATE tokens SET credits=0 WHERE id=?').run(t.id); trace.push('#' + t.id + ' 402 额度耗尽 -> 换号'); continue; }
+    if (r.status === 401) { db.prepare('UPDATE tokens SET at=NULL, at_expires=NULL WHERE id=?').run(t.id); trace.push('#' + t.id + ' 401 AT 失效 -> 清 AT 后换号'); continue; }
     const msg = r.error || ('HTTP ' + r.status);
-    if (isTransient(msg)) { trace.push('#' + t.id + ' 瞬时错误(' + msg + ') -> 不算故障，换号'); continue; }
+    if (r.status === 0 || isTransient(msg)) { trace.push('#' + t.id + ' 瞬时错误(' + msg + ') -> 不算故障，换号'); continue; }
     recordError(t, msg);
     trace.push('#' + t.id + ' 错误(' + msg + ')');
   }
