@@ -31,10 +31,16 @@ const INTERVAL_MS = argOf('--interval', 300) * 1000;
 
 fs.mkdirSync(LOGD, { recursive: true });
 
+let logBomDone = false;
 function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
-  try { fs.appendFileSync(LOGF, line + '\n', 'utf8'); } catch (e) {}
+  try {
+    // 首次创建时补 BOM，方便 PowerShell 5.1 的 Get-Content 正确显示中文
+    if (!logBomDone && !fs.existsSync(LOGF)) { fs.writeFileSync(LOGF, '\uFEFF', 'utf8'); }
+    logBomDone = true;
+    fs.appendFileSync(LOGF, line + '\n', 'utf8');
+  } catch (e) {}
 }
 
 function git(args, opts) {
