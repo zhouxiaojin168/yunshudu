@@ -661,11 +661,11 @@ async function pollPending() {
     const acct = t.account_id ? getAccount(t.account_id) : null;
     if (!acct) { db.prepare("UPDATE tasks SET status='failed', error='account_missing', updated_at=? WHERE id=?").run(now(), t.id); continue; }
     const q = await upstream('query', '/api/feed/creation/search/my', { token: acct.token, limit: 20 });
-    if (q.status !== 200) continue;
+    if (q.status !== 200) { if (process.env.H3P_DEBUG_POLL) log('poll ' + t.id + ' 上游 http ' + q.status + ' :: ' + JSON.stringify(q.json).slice(0, 140)); continue; }
     const feeds = dig(q.json, qcfg.list_path || 'data.feeds');
-    if (!Array.isArray(feeds)) continue;
+    if (!Array.isArray(feeds)) { if (process.env.H3P_DEBUG_POLL) log('poll ' + t.id + ' feeds 不是数组'); continue; }
     const hit = feeds.find((f) => String(dig(f, qcfg.id_path || 'commonInfo.id')) === String(t.upstream_task_id));
-    if (!hit) continue;
+    if (!hit) { if (process.env.H3P_DEBUG_POLL) log('poll ' + t.id + ' 未命中(upid=' + t.upstream_task_id + ' feeds=' + feeds.length + ')'); continue; }
     const st = Number(dig(hit, qcfg.status_path || 'commonInfo.status'));
     const url = dig(hit, qcfg.url_path || 'metaInfo.imageMetaInfo.mediaInfo.url');
     if (st === 2 && url) {
