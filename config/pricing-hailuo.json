@@ -1,0 +1,102 @@
+{
+  "$comment": "漫剧-复刻 / 海螺-MiniMax 形态的价格与分组预置。改这个文件 -> 跑 scripts/setup-hailuo-pricing.ps1 即生效（幂等）。",
+  "$units": "new-api 内部额度单位是 quota；这里把展示口径设成 1 算力 = 1 quota（1 USD = 500000 算力），所以下面 total_amount 填几就是几算力。",
+  "display": {
+    "quota_display_type": "CUSTOM",
+    "custom_currency_symbol": "算力",
+    "custom_currency_exchange_rate": 500000,
+    "display_in_currency_enabled": true
+  },
+  "currency": {
+    "usd_exchange_rate": 7.3
+  },
+  "groups": {
+    "group_ratio": {
+      "default": 1,
+      "vip": 0.9,
+      "svip": 0.8
+    },
+    "group_group_ratio": {
+      "vip": {
+        "default": 0.9
+      },
+      "svip": {
+        "default": 0.8
+      }
+    },
+    "topup_group_ratio": {
+      "default": 1,
+      "vip": 0.9,
+      "svip": 0.8
+    },
+    "user_usable_groups": {
+      "default": "默认分组",
+      "vip": "VIP 分组（9 折）",
+      "svip": "SVIP 分组（8 折）"
+    },
+    "auto_groups": [
+      "default"
+    ]
+  },
+  "models": {
+    "MiniMax-H3": {
+      "ratio": 1,
+      "price": 0.001,
+      "note": "≈500 算力/次"
+    },
+    "H3-Max": {
+      "ratio": 1,
+      "price": 0.002,
+      "note": "≈1000 算力/次"
+    },
+    "Hailuo-2.3": {
+      "ratio": 1,
+      "price": 0.0006,
+      "note": "≈300 算力/次"
+    },
+    "MiniMax-Image": {
+      "ratio": 1,
+      "price": 0.00004,
+      "note": "≈20 算力/张"
+    }
+  },
+  "checkin": {
+    "enabled": true,
+    "min_quota": 1000,
+    "max_quota": 10000
+  },
+  "plans": [
+    {
+      "title": "99 包月套餐",
+      "subtitle": "9,900 算力 / 月 · H3 + MiniMax 全家桶 · 自动升 VIP（9 折）",
+      "price_amount": 99,
+      "duration_unit": "month",
+      "duration_value": 1,
+      "quota_reset_period": "monthly",
+      "total_amount": 9900,
+      "upgrade_group": "vip",
+      "downgrade_group": "default",
+      "max_purchase_per_user": 0,
+      "allow_balance_pay": true,
+      "allow_wallet_overflow": true,
+      "enabled": true,
+      "sort_order": 10
+    },
+    {
+      "title": "299 尊享月",
+      "subtitle": "33,000 算力 / 月 · SVIP（8 折）",
+      "price_amount": 299,
+      "duration_unit": "month",
+      "duration_value": 1,
+      "quota_reset_period": "monthly",
+      "total_amount": 33000,
+      "upgrade_group": "svip",
+      "downgrade_group": "default",
+      "max_purchase_per_user": 0,
+      "allow_balance_pay": true,
+      "allow_wallet_overflow": true,
+      "enabled": true,
+      "sort_order": 20
+    }
+  ]
+}
