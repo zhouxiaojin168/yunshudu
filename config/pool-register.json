@@ -52,8 +52,7 @@
       "type": "emit",
       "as": {
         "token": "{{token}}",
-        "label": "reg-{{phone}}",
-        "credits": 0
+        "label": "reg-{{phone}}"
       }
     }
   ]

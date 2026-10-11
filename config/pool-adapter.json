@@ -30,8 +30,10 @@
         "task_id": "task_id",
         "result_url": "video_url",
         "wallet_before": "wallet.before",
-        "wallet_after": "wallet.after"
+        "wallet_after": "wallet.after",
+        "delta": "wallet.delta"
       }
     }
-  }
+  },
+  "_note": "上游适配器：池子只认 3 个接口 wallet/checkin/task；换上游只改这个 JSON，不动代码。base 可被环境变量 H3P_UPSTREAM 覆盖。"
 }

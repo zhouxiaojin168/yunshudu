@@ -246,6 +246,7 @@ async function guardRound(force) {
   if (busy) return { skipped: 'busy' };
   busy = true;
   const report = { at: new Date().toISOString(), pool: null, actions: [] };
+  state.last_error = null;  // 新一轮开始就清掉上一轮的旧错，避免状态页骗人
   try {
     const st = await poolStats();
     const h = healthyCount(st);

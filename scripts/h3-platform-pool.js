@@ -167,10 +167,22 @@ async function syncWallet(acct) {
       db.prepare('UPDATE accounts SET credits=? WHERE id=?').run(bal, acct.id);
       return bal;
     }
-    /* 探余额就 401/403 => 这个号已经死了，直接下掉，别让池子虚胖 */
-    if (w.status === 401 || w.status === 403) disableAccount(acct, 'WALLET_AUTH_FAILED');
   } catch (e) {}
   return null;
+}
+
+/* 导入时探余额：200 -> 回写真实余额；401/403 -> 判该号无效；其它 -> 保持原样等下一轮 */
+async function probeWallet(acct) {
+  try {
+    const w = await upstream('wallet', '/official/v2/wallet', { token: acct.token });
+    const bal = Number(w.g.credits);
+    if (w.status === 200 && isFinite(bal)) {
+      db.prepare('UPDATE accounts SET credits=?, fail_reason=NULL WHERE id=?').run(bal, acct.id);
+      return { ok: true, credits: bal };
+    }
+    if (w.status === 401 || w.status === 403) { disableAccount(acct, 'PROBE_AUTH_FAILED'); return { ok: false, status: w.status }; }
+    return { ok: false, status: w.status };
+  } catch (e) { return { ok: false, status: 0, error: e.message }; }
 }
 
 /* ------------------------- 平台池调度 ------------------------- */
@@ -203,12 +215,13 @@ function insertAccount(inp, requireToken) {
   }
   const exists = db.prepare('SELECT id FROM accounts WHERE token=?').get(token);
   if (exists && !o.overwrite) return { skipped: true, reason: 'exists' };
+  const noCredits = (o.credits === undefined || o.credits === null);
   const credits = Number(o.credits || 0);
   const cap = Number(o.cap || ACCOUNT_CAP) || ACCOUNT_CAP;
   db.prepare('INSERT OR REPLACE INTO accounts (label,token,credits,held,cap,last_checkin_at,healthy,cooldown_until,fail_reason,checkin_count,inflight,success_count,created_at) VALUES (?,?,?,0,?,?,1,0,NULL,0,0,0,?)')
     .run(label, token, credits, cap, now(), now());
   const row = db.prepare('SELECT * FROM accounts WHERE token=?').get(token);
-  return { id: row ? row.id : null, token: token, label: label, credits: credits, cap: cap, probed: credits <= 0 };
+  return { id: row ? row.id : null, token: token, label: label, credits: credits, cap: cap, probed: noCredits };
 }
 function disableAccount(acct, reason) {
   db.prepare('UPDATE accounts SET healthy=0, fail_reason=? WHERE id=?').run(reason, acct.id);
@@ -489,7 +502,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url === '/pool/accounts') {
       const r = insertAccount(body, false);
       if (r.skipped) return send(res, 400, { ok: false, code: 'bad_account', reason: r.reason });
-      if (r.probed) { const row = db.prepare('SELECT * FROM accounts WHERE id=?').get(r.id); const bal = await syncWallet(row); if (bal !== null) r.credits = bal; }
+      if (r.probed) { const row = db.prepare('SELECT * FROM accounts WHERE id=?').get(r.id); const pr = await probeWallet(row); if (pr.ok) r.credits = pr.credits; }
       return send(res, 200, { ok: true, id: r.id, token: r.token, label: r.label, credits: r.credits, probed: r.probed });
     }
     if (req.method === 'POST' && url === '/pool/accounts/bulk') {
@@ -503,7 +516,7 @@ const server = http.createServer(async (req, res) => {
       }
       for (const id of newIds) {
         const row = db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
-        if (row && Number(row.credits) === 0) await syncWallet(row);
+        if (row) await probeWallet(row);
       }
       return send(res, 200, { ok: true, total: arr.length, imported, skipped, probed, accounts: listAccounts() });
     }
