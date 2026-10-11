@@ -127,15 +127,24 @@ async function upstream(name, fallbackPath, payload) {
   const body = Object.assign({}, payload || {});
   const token = body.token;
   delete body.token;
-  if (token != null && token !== '') {
+  /* auth.type='hailuo_web'：海螺网页端协议（header token + header yy 签名 + 公共参数拼进 query）
+     见 scripts/hailuo-sign.js。账号 token 支持 'token|uuid|device_id' 三段。*/
+  const isHailuo = String(auth.type) === 'hailuo_web';
+  let signedReq = null;
+  if (isHailuo) {
+    const HS = require('./hailuo-sign.js');
+    signedReq = HS.buildSignedRequest({ url: pathname, method: method,
+      body: (method === 'GET' || method === 'HEAD') ? undefined : body,
+      raw: String(token == null ? '' : token), time: Date.now() });
+  } else if (token != null && token !== '') {
     if (auth.type === 'bearer') headers['authorization'] = 'Bearer ' + token;
     else if (auth.type === 'header') headers[String(auth.header || 'x-token').toLowerCase()] = String(token);
     else body[auth.field || 'token'] = token;
   }
-  const init = { method: method, headers: headers };
-  if (method !== 'GET' && method !== 'HEAD') init.body = JSON.stringify(body);
+  const init = { method: method, headers: signedReq ? signedReq.headers : headers };
+  if (method !== 'GET' && method !== 'HEAD') init.body = signedReq ? signedReq.bodyString : JSON.stringify(body);
   let r;
-  try { r = await fetch(ADAPTER_BASE + pathname, init); }
+  try { r = await fetch(ADAPTER_BASE + (signedReq ? signedReq.url : pathname), init); }
   catch (err) {
     /* 上游不可达/地址没配好：返回 status 0，让调用方按 upstream_error 处理，绝不让进程崩 */
     return { status: 0, json: { error: 'upstream_unreachable', message: String(err && err.message || err) }, retry_after: 0,
@@ -144,13 +153,25 @@ async function upstream(name, fallbackPath, payload) {
   let j = null;
   try { j = await r.json(); } catch (err) { j = null; }
   const flat = j || {};
+  /* 海螺响应信封 {statusInfo:{code,...}, data}：把业务码翻译成池子既有的 HTTP 语义，换号逻辑全复用
+     1000048 -> 401（token 失效 -> 换号/下线）  22 -> 403（封禁）  2400026/2400040 -> 402（贝壳不足 -> 换号）*/
+  let httpLike = r.status;
+  if (isHailuo) {
+    const HS = require('./hailuo-sign.js');
+    const cls = HS.classifyResponse(r.status, j);
+    httpLike = cls.ok ? 200
+      : (cls.kind === 'AUTH_EXPIRED' ? 401
+        : cls.kind === 'NO_CREDITS' ? 402
+          : cls.kind === 'ACCOUNT_BANNED' ? 403
+            : (r.status >= 400 ? r.status : 400));
+  }
   const map = e.map || {};
   const pick = function (k, dflt) {
     const v = dig(flat, map[k]);
     return (v === undefined || v === null) ? dig(flat, dflt) : v;
   };
   return {
-    status: r.status,
+    status: httpLike,
     json: flat,
     retry_after: Number(r.headers.get('retry-after') || flat.retry_after || 0),
     g: {

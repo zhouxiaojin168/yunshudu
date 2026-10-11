@@ -1,0 +1,41 @@
+{
+  "_note": "乙路（海螺网页端）适配器：base=同源 hailuoai.com，auth=网页签名(token+yy)，账号 token 形如 \"<_token>|<uuid>|<device_id>\"。路径与字段名逆向自 cdn.hailuoai.com/hailuo-video-web/prod-zh-0.1.797 前端包（scripts/hailuo-sign.js 有逐条铁证注释）。",
+  "_verify": [
+    "wallet/checkin 的 map 字段名（data.*）需用真号跑一次 node scripts/probe-hailuo.js --token \"<token|uuid|device>\" 确认后写死",
+    "task 的 path 按业务选：生图 /v2/api/multimodal/generate/image，生视频 /v2/api/multimodal/generate/video，Agent 生图 /v1/agent/generate",
+    "海螺无「签到」接口 -> checkin 建议直接关掉（H3P_CHECKIN_MS 随便，反正会退避），额度是每天北京时间 8:00 自动下发"
+  ],
+  "name": "hailuo-web",
+  "base": "https://hailuoai.com",
+  "auth": {
+    "type": "hailuo_web"
+  },
+  "endpoints": {
+    "wallet": {
+      "method": "GET",
+      "path": "/v1/api/billing/credit",
+      "map": {
+        "credits": "data.credit"
+      }
+    },
+    "checkin": {
+      "method": "GET",
+      "path": "/v1/api/user/equity",
+      "map": {
+        "credits_after": "data.credit",
+        "credits_before": "data.credit",
+        "delta": "data.delta"
+      }
+    },
+    "task": {
+      "method": "POST",
+      "path": "/v2/api/multimodal/generate/image",
+      "map": {
+        "task_id": "data.taskID",
+        "result_url": "data.fileURL",
+        "wallet_before": "data.creditBefore",
+        "wallet_after": "data.creditAfter"
+      }
+    }
+  }
+}
