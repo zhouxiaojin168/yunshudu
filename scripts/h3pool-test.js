@@ -1,14 +1,14 @@
 /**
  * h3pool-test.js -- 「平台池」算力池打靶（10 个场景）
  *   node scripts/h3pool-test.js
- * 自己起两个进程（测试端口 9950/9951 + 独立 DB），跑完自动收摊。
+ * 自己起两个进程（测试端口 9960/9961 + 独立 DB），跑完自动收摊。
  */
 'use strict';
 const cp = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const ROOT = path.resolve(__dirname, '..');
-const PORT_POOL = 9950, PORT_MOCK = 9951, ADMIN = 'sk-hl-admin';
+const PORT_POOL = 9960, PORT_MOCK = 9961, ADMIN = 'sk-hl-admin';
 const POOL = 'http://127.0.0.1:' + PORT_POOL, MOCK = 'http://127.0.0.1:' + PORT_MOCK;
 let pass = 0, fail = 0; const fails = [];
 function ok(name, cond, extra) {

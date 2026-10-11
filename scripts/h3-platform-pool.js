@@ -107,7 +107,9 @@ let ADAPTER = null;
 try { ADAPTER = JSON.parse(fs.readFileSync(ADAPTER_FILE, 'utf8')); log('adapter: ' + ADAPTER.name + ' base=' + ADAPTER.base + ' <- ' + ADAPTER_FILE); }
 catch (e) { log('adapter: 读不到 ' + ADAPTER_FILE + '，退回内置 mock 形态（' + e.message + '）'); }
 const EP = (ADAPTER && ADAPTER.endpoints) || {};
-const ADAPTER_BASE = String((ADAPTER && ADAPTER.base) || UPSTREAM).replace(/\/+$/, '');
+/* 优先级：H3P_UPSTREAM 环境变量（显式指定） > 适配器 JSON 的 base > 内置默认 */
+const ADAPTER_BASE = String(process.env.H3P_UPSTREAM || (ADAPTER && ADAPTER.base) || UPSTREAM).replace(/\/+$/, '');
+const ADAPTER_BASE_SRC = process.env.H3P_UPSTREAM ? 'env:H3P_UPSTREAM' : ((ADAPTER && ADAPTER.base) ? 'json:' + ADAPTER_FILE : 'builtin');
 const ADAPTER_AUTH = (ADAPTER && ADAPTER.auth) || { type: 'body', field: 'token' };
 
 function dig(obj, p) {
@@ -521,5 +523,5 @@ const server = http.createServer(async (req, res) => {
 let checkinBusy = false;
 setInterval(async () => { if (checkinBusy) return; checkinBusy = true; try { await checkinTick(); } finally { checkinBusy = false; } }, Math.min(CHECKIN_MS, 5000));
 
-server.listen(PORT, '127.0.0.1', () => log('[h3-platform-pool] listening on 127.0.0.1:' + PORT + ' upstream=' + UPSTREAM +
+server.listen(PORT, '127.0.0.1', () => log('[h3-platform-pool] listening on 127.0.0.1:' + PORT + ' upstream=' + ADAPTER_BASE + ' (from ' + ADAPTER_BASE_SRC + ')' +
   ' checkin=' + CHECKIN_MS + 'ms daily=' + DAILY_CREDITS + ' reserve_x' + RESERVE_FACTOR + ' retries=' + MAX_RETRIES + ' inflight=' + MAX_INFLIGHT));
