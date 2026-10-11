@@ -209,10 +209,10 @@ async function runPoolTask(opts) {
 }
 
 /* ------------------------- 签到补分 ------------------------- */
-async function checkinTick() {
+async function checkinTick(force) {
   for (const a of listAccounts()) {
     if (!a.healthy) continue;
-    if (now() - Number(a.last_checkin_at || 0) < CHECKIN_MS) continue;
+    if (!force && now() - Number(a.last_checkin_at || 0) < CHECKIN_MS) continue;
     try {
       const r = await upstream('/official/v2/checkin', { token: a.token });
       if (r.status === 200) {
