@@ -10,8 +10,9 @@
  *   2) git add -A -> 没变化就跳过
  *   3) 敏感信息自检（命中 sk-xxx / password: / access_token: 直接中止，不推）
  *   4) git commit -> git push
+ *   5) ★ 收尾补同步：若仍有未同步改动（例如改动刚好落在 mute 窗内被吞），立刻补一次
  *
- * token 读取顺序：环境变量 GITHUB_TOKEN > runtime/github-token.txt > $CODEX_HOME/work/tools/gh-token.json
+ * token 读取顺序：环境变量 GITHUB_TOKEN > GITHUB_TOKEN_FILE > %USERPROFILE%\.yunshudu\gh-token.txt > $CODEX_HOME/work/tools/gh-token.json
  */
 const fs = require('fs');
 const path = require('path');
@@ -30,6 +31,7 @@ const DEBOUNCE_MS = argOf('--debounce', 8) * 1000;
 const INTERVAL_MS = argOf('--interval', 300) * 1000;
 let muteUntil = 0;   // 同步期间自己写文件产生的 watch 事件，直接忽略
 let lastPushAt = 0;  // 上次推送成功时间（无新提交时的推送节流）
+let followUps = 0;   // 连续补同步次数（防止异常情况下无限补）
 
 fs.mkdirSync(LOGD, { recursive: true });
 
@@ -38,7 +40,6 @@ function log(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
   console.log(line);
   try {
-    // 首次创建时补 BOM，方便 PowerShell 5.1 的 Get-Content 正确显示中文
     if (!logBomDone && !fs.existsSync(LOGF)) { fs.writeFileSync(LOGF, '\uFEFF', 'utf8'); }
     logBomDone = true;
     fs.appendFileSync(LOGF, line + '\n', 'utf8');
@@ -51,10 +52,6 @@ function git(args, opts) {
 
 function readToken() {
   if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN.trim();
-  // token 绝不放进仓库目录，只放仓库外。查找顺序：
-  //   ① GITHUB_TOKEN 环境变量  ② GITHUB_TOKEN_FILE 指定的文件
-  //   ③ %USERPROFILE%\.yunshudu\gh-token.txt（推荐，最稳）
-  //   ④ %CODEX_HOME%\work\tools\gh-token.json
   const cands = [];
   if (process.env.GITHUB_TOKEN_FILE) cands.push(process.env.GITHUB_TOKEN_FILE);
   if (process.env.USERPROFILE) cands.push(path.join(process.env.USERPROFILE, '.yunshudu', 'gh-token.txt'));
@@ -76,12 +73,11 @@ function remoteUrl() {
 }
 
 /* ---- 敏感信息自检：命中就中止本次推送 ---- */
-/* 只对"新增的行"做检查，并跳过本文件自身；要求值确实长得像密钥，避免误伤文档/正则 */
-const GUARD_SELF = ['scripts/auto-sync.js'];   // 这些文件永远不算'新增敏感内容'（它们本身就是规则）
-const NEVER_TRACK = ['runtime/github-token.txt', 'runtime/credentials.txt', 'runtime/test-token.txt'];  // 双保险：命中直接拒绝
+const GUARD_SELF = ['scripts/auto-sync.js'];
+const NEVER_TRACK = ['runtime/github-token.txt', 'runtime/credentials.txt', 'runtime/test-token.txt'];
 const RISKY = [
-  /\bsk-[A-Za-z0-9]{32,}\b/,                                                  // 平台令牌明文
-  /\beyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}/,       // JWT
+  /\bsk-[A-Za-z0-9]{32,}\b/,
+  /\beyJ[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{20,}\.[A-Za-z0-9_\-]{10,}/,
   /(?:access_token|api[_-]?key|passwd|password|secret|token)\s*[:=]\s*["']?[A-Za-z0-9_\-\/\+\.=!@#$%^&*]{24,}/i,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/
 ];
@@ -102,12 +98,18 @@ function riskyHits() {
   }
   return hits;
 }
+
 function rebuildSnapshot() {
   const script = path.join(ROOT, 'scripts', 'build-site-json.js');
   if (!fs.existsSync(script)) return;
   const r = spawnSync(process.execPath, [script], { cwd: ROOT, encoding: 'utf8', timeout: 30000 });
   if (r.status === 0) log('  快照已重建');
   else log('  快照重建跳过（网关可能没开）');
+}
+
+function isDirty() {
+  const st = git(['status', '--porcelain']);
+  return !!(st.stdout || '').trim();
 }
 
 function sync(reason) {
@@ -118,8 +120,7 @@ function sync(reason) {
   let r = git(['add', '-A']);
   if (r.status !== 0) return log('  git add 失败: ' + (r.stderr || '').trim());
 
-  const st = git(['status', '--porcelain']);
-  if ((st.stdout || '').trim()) {
+  if (isDirty()) {
     const hits = riskyHits();
     if (hits.length) {
       git(['reset']);
@@ -131,23 +132,44 @@ function sync(reason) {
     r = git(['commit', '-m', msg]);
     if (r.status !== 0) return log('  commit 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
     log('  committed: ' + msg);
+    followUps = 0;
   } else {
-    // 没有新提交：只在"距上次成功推送超过 5 分钟"时才推一次，避免空转
-    if (Date.now() - lastPushAt < 5 * 60 * 1000) return log('  没有新变化，且刚推过，跳过');
-    log('  没有新变化（兜底推一次，保证之前失败的能自愈）');
+    if (Date.now() - lastPushAt < 5 * 60 * 1000) { log('  没有新变化，且刚推过，跳过'); }
+    else log('  没有新变化（兜底推一次，保证之前失败的能自愈）');
   }
 
   const tok = readToken();
   const url = remoteUrl();
-  if (!tok || !url) return log('  ⚠ 缺少 token 或 remote，已提交但未推送');
-  const m = url.match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?$/);
-  if (!m) return log('  ⚠ remote 不是 github 地址: ' + url);
-  const pushUrl = `https://${m[1]}:${tok}@github.com/${m[1]}/${m[2]}.git`;
+  let pushed = false;
+  if (!tok || !url) {
+    log('  ⚠ 缺少 token 或 remote，已提交但未推送');
+  } else {
+    const m = url.match(/github\.com[/:]([^/]+)\/([^/.]+?)(?:\.git)?$/);
+    if (!m) log('  ⚠ remote 不是 github 地址: ' + url);
+    else {
+      const pushUrl = `https://${m[1]}:${tok}@github.com/${m[1]}/${m[2]}.git`;
+      r = git(['-c', 'credential.helper=', '-c', `http.proxy=${PROXY}`, 'push', pushUrl, 'main:main'],
+              { env: Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }) });
+      if (r.status === 0) { lastPushAt = Date.now(); pushed = true; log('  ✅ pushed -> ' + `https://github.com/${m[1]}/${m[2]}`); }
+      else log('  ❌ push 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
+    }
+  }
 
-  r = git(['-c', 'credential.helper=', '-c', `http.proxy=${PROXY}`, 'push', pushUrl, 'main:main'],
-          { env: Object.assign({}, process.env, { GIT_TERMINAL_PROMPT: '0', GCM_INTERACTIVE: 'never' }) });
-  if (r.status === 0) { lastPushAt = Date.now(); log('  ✅ pushed -> ' + `https://github.com/${m[1]}/${m[2]}`); }
-  else log('  ❌ push 失败: ' + ((r.stderr || '') + (r.stdout || '')).trim().slice(0, 300));
+  /* ★ 收尾补同步：同步期间（mute 窗内）如果又落了新改动，刚才的 watch 事件会被吞，
+     这里主动检查一次工作区；仍有未同步内容就补一轮，避免要等 300s 兜底。
+     连续补同步最多 2 次，防止异常情况下打转。 */
+  if (!ONCE && isDirty()) {
+    if (followUps < 2) {
+      followUps++;
+      log(`  仍有未同步改动，${DEBOUNCE_MS / 1000}s 后补同步（第 ${followUps} 次）`);
+      setTimeout(() => sync('收尾补同步'), DEBOUNCE_MS);
+    } else {
+      log('  ⚠ 连续补同步已达上限，交回兜底定时器');
+    }
+  } else if (!ONCE) {
+    followUps = 0;
+  }
+  return pushed;
 }
 
 /* ---------- 主流程 ---------- */
