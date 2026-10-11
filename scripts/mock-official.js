@@ -15,6 +15,7 @@
  *   POST /internal/admin/reset                     清空账号表
  *   POST /internal/admin/account {token,credits,valid,rate_limited}
  *   POST /internal/admin/delay   {ms}              给所有任务加固定延迟（用于压并发）
+ *   GET  /internal/admin/stats                    签到被调用次数（用于验证退避）
  *   GET  /internal/admin/accounts
  */
 'use strict';
@@ -26,6 +27,7 @@ const DAY_CREDITS = Number(process.env.OFFICIAL_DAILY_CREDITS || 300);
 const accts = new Map();
 let delayMs = 0;
 let seq = 0;
+let checkinCalls = 0;
 
 function acct(t) {
   if (!accts.has(t)) accts.set(t, { token: t, credits: 0, valid: true, rate_limited: false, calls: 0 });
@@ -49,7 +51,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url === '/healthz') return send(res, 200, { ok: true, accounts: accts.size, delay_ms: delayMs });
   if (req.method === 'GET' && url === '/internal/admin/accounts') return send(res, 200, { accounts: [...accts.values()] });
-  if (req.method === 'POST' && url === '/internal/admin/reset') { accts.clear(); delayMs = 0; return send(res, 200, { ok: true }); }
+  if (req.method === 'POST' && url === '/internal/admin/reset') { accts.clear(); delayMs = 0; checkinCalls = 0; return send(res, 200, { ok: true }); }
+  if (req.method === 'GET' && url === '/internal/admin/stats') return send(res, 200, { checkin_calls: checkinCalls, accounts: accts.size });
   if (req.method === 'POST' && url === '/internal/admin/delay') { delayMs = Number(body.ms || 0); return send(res, 200, { ok: true, delay_ms: delayMs }); }
   if (req.method === 'POST' && url === '/internal/admin/account') {
     const a = acct(String(body.token || ''));
@@ -65,8 +68,11 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { token: a.token, balance: a.credits });
   }
   if (req.method === 'POST' && url === '/official/v2/checkin') {
+    checkinCalls += 1;
     const a = accts.get(String(body.token || ''));
     if (!a) return send(res, 401, { code: 401, message: 'invalid account token' });
+    /* 上游风控：被限流的账号签到一律 429 + Retry-After（用于验证池子的退避闸门）*/
+    if (a.rate_limited) return send(res, 429, { code: 429, message: 'too many requests, slow down', retry_after: 5 }, { 'retry-after': '5' });
     const before = a.credits;
     a.credits = Math.min(a.cap === undefined ? 1e9 : a.cap, a.credits + DAY_CREDITS);
     return send(res, 200, { token: a.token, before, after: a.credits, delta: a.credits - before });
