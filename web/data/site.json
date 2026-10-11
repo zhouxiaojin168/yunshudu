@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-11T14:51:59.222Z",
+  "generatedAt": "2026-10-11T15:09:40.270Z",
   "source": "http://127.0.0.1:3300",
   "site": {
     "name": "yunshudu",
@@ -51,7 +51,20 @@
     {
       "model_name": "MiniMax-H3",
       "quota_type": 1,
-      "model_price": 0.047945205479,
+      "model_price": 1,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "MiniMax-Image",
+      "quota_type": 1,
+      "model_price": 0.05,
       "model_ratio": 0,
       "completion_ratio": 0,
       "groups": [
@@ -115,6 +128,21 @@
       ],
       "status": 1,
       "priority": 100,
+      "weight": 10,
+      "auto_ban": 0,
+      "is_multi_key": false,
+      "key_count": 1
+    },
+    {
+      "id": 12,
+      "name": "平台池-海螺H3式(platform-pool)",
+      "base_url": "http://127.0.0.1:9940",
+      "models": [
+        "MiniMax-H3",
+        "MiniMax-Image"
+      ],
+      "status": 1,
+      "priority": 110,
       "weight": 10,
       "auto_ban": 0,
       "is_multi_key": false,
