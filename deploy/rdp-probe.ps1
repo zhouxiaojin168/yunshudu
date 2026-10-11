@@ -49,6 +49,7 @@ $HWND_TOPMOST = [IntPtr](-1); $HWND_NOTOPMOST = [IntPtr](-2); $SWP = 0x0001 -bor
 $tries = 0; $got = $false
 while ($tries -lt 10 -and -not $got) {
   $tries++
+  [PB.U]::keybd_event(0x12, 0x38, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40; [PB.U]::keybd_event(0x12, 0x38, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60  # ALT-UNLOCK
   [void][PB.U]::ShowWindow($h, 3)
   [void][PB.U]::SetWindowPos($h, $HWND_TOPMOST, 0, 0, 0, 0, $SWP)
   [void][PB.U]::BringWindowToTop($h)

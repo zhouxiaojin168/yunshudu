@@ -36,6 +36,7 @@ Add-Type -Namespace PC -Name U -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string win);
+[DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
 '@
 function WTitle([IntPtr]$h) { $sb = New-Object System.Text.StringBuilder 512; [void][PC.U]::GetWindowTextW($h, $sb, 512); return $sb.ToString() }
@@ -86,6 +87,7 @@ if ($Maximize) {
 }
 if ($ProbeOnly) { exit 0 }
 if ($FocusMstsc) {
+  [PC.U]::keybd_event(0x12, 0x38, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40; [PC.U]::keybd_event(0x12, 0x38, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60  # ALT-UNLOCK
   [void][PC.U]::ShowWindow($h, 3)
   [void][PC.U]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x0001 -bor 0x0002 -bor 0x0040)
   [void][PC.U]::BringWindowToTop($h)

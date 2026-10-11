@@ -41,6 +41,7 @@ $p = New-Object psobject -Property @{ Id = $mspid }
 $tries = 0; $got = $false
 while ($tries -lt 10 -and -not $got) {
   $tries++
+  [P2.U]::keybd_event(0x12, 0x38, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 40; [P2.U]::keybd_event(0x12, 0x38, 2, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60  # ALT-UNLOCK
   [void][P2.U]::ShowWindow($h, 3)
   [void][P2.U]::SetWindowPos($h, [IntPtr](-1), 0, 0, 0, 0, 0x0043)
   [void][P2.U]::BringWindowToTop($h)
