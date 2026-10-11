@@ -178,8 +178,9 @@
     }).catch(function (e) {
       btn.textContent = '拉取失败';
       setTimeout(function () { btn.textContent = old; btn.disabled = false; }, 1600);
-      // 连不上网关时退回离线快照模式
-      var off = $('liveDot'); if (off) off.className = 'dot off';
+      // 连不上网关时退回离线快照模式（把版本号清空，render 会自动切成"离线快照"）
+      if (SNAP.site) SNAP.site.version = '';
+      render(SNAP);
       var lt = $('liveText'); if (lt) lt.textContent = '离线快照 · 未连接网关（' + (LIVE_BASE || '同源') + '）';
       console.warn('live refresh failed:', e.message);
     });
