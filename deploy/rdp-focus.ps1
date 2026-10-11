@@ -45,23 +45,34 @@ function Shot([string]$name) {
   Write-Host ('  shot -> C:\rdpshare\' + $name + '.png')
 }
 
+# 先清掉本机残留的『运行』对话框：它会持续抢前台，导致抢不到 mstsc
+$wsh0 = New-Object -ComObject WScript.Shell
+for ($i = 0; $i -lt 3; $i++) { if ($wsh0.AppActivate('运行')) { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 400; Write-Host '  closed local Run dialog' } else { break } }
+
 $p = Get-Process mstsc -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object StartTime -Descending | Select-Object -First 1
 if (-not $p) { Write-Host 'NO mstsc'; exit 1 }
 $h = $p.MainWindowHandle
 Write-Host ('mstsc pid=' + $p.Id + '  hwnd=' + $h + '  title=' + (WinTitle $h))
 
-[void][N.U]::ShowWindow($h, 9)
-[void][N.U]::SetWindowPos($h, $HWND_TOPMOST, 0, 0, 0, 0, $SWP)
-[void][N.U]::BringWindowToTop($h)
-$fg = [N.U]::GetForegroundWindow()
-$fpid = [uint32]0
-$ft = [N.U]::GetWindowThreadProcessId($fg, [ref]$fpid)
-$ct = [N.U]::GetCurrentThreadId()
-[void][N.U]::AttachThreadInput($ct, $ft, $true)
-[void][N.U]::SwitchToThisWindow($h, $true)
-$ok = [N.U]::SetForegroundWindow($h)
-[void][N.U]::AttachThreadInput($ct, $ft, $false)
-[void][N.U]::SetWindowPos($h, $HWND_NOTOPMOST, 0, 0, 0, 0, $SWP)
+$swTries = 0
+while ($swTries -lt 6) {
+  $swTries++
+  [void][N.U]::ShowWindow($h, 9)
+  [void][N.U]::SetWindowPos($h, $HWND_TOPMOST, 0, 0, 0, 0, $SWP)
+  [void][N.U]::BringWindowToTop($h)
+  $fg = [N.U]::GetForegroundWindow()
+  $fpid = [uint32]0
+  $ft = [N.U]::GetWindowThreadProcessId($fg, [ref]$fpid)
+  $ct = [N.U]::GetCurrentThreadId()
+  [void][N.U]::AttachThreadInput($ct, $ft, $true)
+  [void][N.U]::SwitchToThisWindow($h, $true)
+  [void][N.U]::SetForegroundWindow($h)
+  [void][N.U]::AttachThreadInput($ct, $ft, $false)
+  [void][N.U]::SetWindowPos($h, $HWND_NOTOPMOST, 0, 0, 0, 0, $SWP)
+  Start-Sleep -Milliseconds 350
+  if ([N.U]::GetForegroundWindow() -eq $h) { Write-Host ('  focus OK on try ' + $swTries); break }
+  Write-Host ('  focus try ' + $swTries + ' failed (fg=' + (WinTitle ([N.U]::GetForegroundWindow())) + ')')
+}
 Start-Sleep -Milliseconds 600
 $fg2 = [N.U]::GetForegroundWindow()
 Write-Host ('  SetForegroundWindow=' + $ok)
