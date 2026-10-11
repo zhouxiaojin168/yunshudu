@@ -6,6 +6,7 @@ param(
   [Parameter(Mandatory=$true)][string]$Text,
   [switch]$Enter,
   [switch]$ShiftFirst,
+  [switch]$CtrlSpaceFirst,
   [int]$KeyDelayMs = 45,
   [int]$AfterMs = 2500,
   [string]$Tag = 't2',
@@ -63,6 +64,7 @@ function DK([int]$vk,[int]$sc,[int]$ex) { [P2.U]::keybd_event([byte]$vk, [byte]$
 function UK([int]$vk,[int]$sc,[int]$ex) { [P2.U]::keybd_event([byte]$vk, [byte]$sc, [uint32]($ex -bor $UP), [UIntPtr]::Zero) }
 function Tap([int]$vk,[int]$sc,[int]$ex) { DK $vk $sc $ex; Start-Sleep -Milliseconds 60; UK $vk $sc $ex }
 if ($ShiftFirst) { Tap 0x10 0x2A 0; Write-Host 'sent SHIFT'; Start-Sleep -Milliseconds 700 }
+if ($CtrlSpaceFirst) { DK 0x11 0x1D 0; Start-Sleep -Milliseconds 70; Tap 0x20 0x39 0; UK 0x11 0x1D 0; Write-Host 'sent Ctrl+Space'; Start-Sleep -Milliseconds 700 }
 $mapLo = @{}
 $letters = 'qwertyuiopasdfghjklzxcvbnm'
 $scans  = @(0x10,0x11,0x12,0x13,0x14,0x15,0x16,0x17,0x18,0x19,0x1E,0x1F,0x20,0x21,0x22,0x23,0x24,0x25,0x26,0x2C,0x2D,0x2E,0x2F,0x30,0x31,0x32)
