@@ -26,6 +26,25 @@ if ($svc.env) {
   }
 }
 
+# envFrom: 从 <Root>\secrets.txt 读密钥再注入（密钥不入库）
+if ($svc.envFrom) {
+  $secFile = Join-Path $Root 'secrets.txt'
+  $sec = @{}
+  if (Test-Path $secFile) {
+    foreach ($line in (Get-Content -LiteralPath $secFile -Encoding UTF8)) {
+      $t = $line.Trim()
+      if (-not $t -or $t.StartsWith('#')) { continue }
+      $i = $t.IndexOf('=')
+      if ($i -gt 0) { $sec[$t.Substring(0, $i).Trim()] = $t.Substring($i + 1).Trim() }
+    }
+  } else { Write-Host ('secrets.txt missing: ' + $secFile) }
+  foreach ($p in $svc.envFrom.PSObject.Properties) {
+    $val = $sec[[string]$p.Value]
+    if ($val) { [Environment]::SetEnvironmentVariable($p.Name, $val, 'Process'); Write-Host ('envFrom-injected ' + $p.Name + ' len=' + $val.Length) }
+    else { Write-Host ('envFrom ' + $p.Name + ' <- secrets:' + [string]$p.Value + ' MISSING') }
+  }
+}
+
 $outLog = Join-Path $logd ($Name + '.out.log')
 $errLog = Join-Path $logd ($Name + '.err.log')
 $pidF   = Join-Path $logd ($Name + '.pid')

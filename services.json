@@ -159,6 +159,115 @@
       },
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "h3-mock-official",
+      "type": "node",
+      "task": "yunshudu-h3-mock",
+      "managed": "auto",
+      "port": 9941,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\mock-official.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "h3-mock-official"
+      ],
+      "env": {
+        "OFFICIAL_PORT": "9941",
+        "OFFICIAL_DAILY_CREDITS": "300"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:9941/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "★沙箱上游（仅演练）：模拟官方「钱包/签到/出片」，用来证明 客户端 -> 渠道 -> 平台池 -> 上游 整条链在服务器上跑通。接真实上游后停掉它即可。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "h3-platform-pool",
+      "type": "node",
+      "task": "yunshudu-h3pool",
+      "managed": "auto",
+      "port": 9940,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\h3-platform-pool.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "h3-platform-pool"
+      ],
+      "env": {
+        "H3P_PORT": "9940",
+        "H3P_UPSTREAM": "http://127.0.0.1:9941",
+        "H3P_DB": "C:\\yunshudu\\data\\h3pool.db",
+        "H3P_CHECKIN_MS": "60000",
+        "H3P_DAILY_CREDITS": "300",
+        "H3P_ADAPTER_FILE": "C:\\yunshudu\\app\\config\\pool-adapter.json"
+      },
+      "envFrom": {
+        "H3P_ADMIN_KEY": "H3P_ADMIN_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:9940/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "账号池引擎（服务端账号池）：把 N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。换上游只改 config/pool-adapter.json 或 H3P_UPSTREAM；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "pool-supply",
+      "type": "node",
+      "task": "yunshudu-pool-supply",
+      "managed": "auto",
+      "port": 9950,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\pool-supply.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "pool-supply"
+      ],
+      "env": {
+        "SUPP_PORT": "9950",
+        "SUPP_POOL_API": "http://127.0.0.1:9940",
+        "SUPP_POOL_MIN": "5",
+        "SUPP_POOL_MAX": "200",
+        "SUPP_FARM_FILE": "C:\\yunshudu\\data\\farm-accounts.jsonl",
+        "SUPP_REGISTER_FILE": "C:\\yunshudu\\app\\config\\pool-register.json",
+        "SUPP_STATE_FILE": "C:\\yunshudu\\state\\pool-supply.json",
+        "SUPP_LOG_FILE": "C:\\yunshudu\\logs\\pool-supply.log"
+      },
+      "envFrom": {
+        "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:9950/supply/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
   ],
   "restartOnDeployDoc": "restartOnDeploy=true: 每次部署都硬重启该服务（用于仓库内的 Node 脚本，保证新代码生效）。false/缺省: 仅当健康检查失败才重启。"

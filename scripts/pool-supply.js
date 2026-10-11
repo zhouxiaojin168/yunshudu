@@ -52,8 +52,8 @@ const INTERVAL = Number(process.env.SUPP_INTERVAL_MS || 60000);
 const CHECKIN_EVERY = Number(process.env.SUPP_CHECKIN_EVERY || 10);
 const REFILL_BATCH = Number(process.env.SUPP_REFILL_BATCH || 3);
 const LOGD = path.join(ROOT, 'logs');
-const LOGF = path.join(LOGD, 'pool-supply.log');
-const STATE = path.join(ROOT, 'state', 'pool-supply.json');
+const LOGF = process.env.SUPP_LOG_FILE || path.join(LOGD, 'pool-supply.log');
+const STATE = process.env.SUPP_STATE_FILE || path.join(ROOT, 'state', 'pool-supply.json');
 const ONCE = process.argv.indexOf('--once') >= 0;
 
 let bomDone = false;

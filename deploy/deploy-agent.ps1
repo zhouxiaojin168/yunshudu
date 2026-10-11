@@ -90,7 +90,9 @@ Remove-Item -LiteralPath $zip -Force
 L ('release -> ' + $rel)
 
 # 4) 同步到 app
-& robocopy $rel $AppD /MIR /NFL /NDL /NP /R:1 /W:1 | Out-Null
+# /MIR 会删 app 里多余的东西，所以要显式排除运行态与私密文件（数据库/账号池/日志/密钥）
+$xd = @( (Join-Path $AppD 'state'), (Join-Path $AppD 'data'), (Join-Path $AppD 'logs'), (Join-Path $AppD 'secrets.txt'), (Join-Path $AppD 'runtime\data') )
+& robocopy $rel $AppD /MIR /XD @xd /XF (Join-Path $AppD 'secrets.txt') /NFL /NDL /NP /R:1 /W:1 | Out-Null
 $rc = $LASTEXITCODE
 L ('robocopy app rc=' + $rc)
 if ($rc -ge 8) { L 'robocopy FAILED -> abort'; exit 4 }
