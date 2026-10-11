@@ -1,9 +1,12 @@
 {
-  "_note": "乙路（海螺网页端）适配器：base=同源 hailuoai.com，auth=网页签名(token+yy)，账号 token 形如 \"<_token>|<uuid>|<device_id>\"。路径与字段名逆向自 cdn.hailuoai.com/hailuo-video-web/prod-zh-0.1.797 前端包（scripts/hailuo-sign.js 有逐条铁证注释）。",
+  "_note": "乙路（海螺网页端）适配器：base=同源 hailuoai.com，auth=网页签名(token 头 + yy 头)。账号 token 形如 \"<_token>|<uuid>|<device_id>\"。路径与字段名逆向自 cdn.hailuoai.com/hailuo-video-web/prod-zh-0.1.797 前端包（scripts/hailuo-sign.js 有逐条铁证注释）；R81 又从同一包的就地引用挖出 billing/credit 的真实响应结构，见 _verify。",
   "_verify": [
-    "wallet/checkin 的 map 字段名（data.*）需用真号跑一次 node scripts/probe-hailuo.js --token \"<token|uuid|device>\" 确认后写死",
-    "task 的 path 按业务选：生图 /v2/api/multimodal/generate/image，生视频 /v2/api/multimodal/generate/video，Agent 生图 /v1/agent/generate",
-    "海螺无「签到」接口 -> checkin 建议直接关掉（H3P_CHECKIN_MS 随便，反正会退避），额度是每天北京时间 8:00 自动下发"
+    "★R81 已定死（无需真号，直接读前端代码得出）：GET /v1/api/billing/credit -> {statusInfo, data:{total_credit:Number, sub_credits:[{credit_type, credit:Number, record:[...]}]}}",
+    "  证据：js/3726-bc4f0460d86d9253.js 原文 `let{total_credit:e,sub_credits:a=[]}=await (0,r.c6)()`，其中 c6 = `o.default.get('/v1/api/billing/credit') -> t.data`",
+    "credit_type 枚举（module 3340）：1=USER_BUY_CREDIT 自购 / 2=SUBSCRIBE_GIVE_CREDIT 订阅赠送 / 3=LOGIN_GIVE_CREDIT 登录赠送",
+    "明细接口：GET /v1/api/billing/transactions?page&page_size&transaction_type（transaction_type: 0=ALL,1=EXPEND,2=BUY,3=GIVE）",
+    "★重要结论：海螺网页端【没有】可调用的「签到领算力」接口，头部那条 text_signin_credit 只是未登录时的会员引导文案（点击= navToSubscribe）。免费额度=按天下发（每天北京时间 8:00 更新）+ LOGIN_GIVE_CREDIT 自动到账 => 本适配器的 checkin 语义 = 「同步一次额度」，不产生增量，delta 恒为 0，靠退避自动收敛。",
+    "仍待真号确认（token 到位后跑 node scripts/probe-hailuo.js）：task 接口的 data.taskID / data.fileURL / data.creditBefore / data.creditAfter 字段名"
   ],
   "name": "hailuo-web",
   "base": "https://hailuoai.com",
@@ -15,16 +18,15 @@
       "method": "GET",
       "path": "/v1/api/billing/credit",
       "map": {
-        "credits": "data.credit"
+        "credits": "data.total_credit"
       }
     },
     "checkin": {
       "method": "GET",
-      "path": "/v1/api/user/equity",
+      "path": "/v1/api/billing/credit",
       "map": {
-        "credits_after": "data.credit",
-        "credits_before": "data.credit",
-        "delta": "data.delta"
+        "credits_after": "data.total_credit",
+        "credits_before": "data.total_credit"
       }
     },
     "task": {
