@@ -118,6 +118,22 @@ function dig(obj, p) {
   return String(p).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
 
+/* 适配器 body 模板渲染：{{key}} 当字符串插值，{{n:key}} 当数字插值（引号一起去掉）
+   例：{"parameter":{"resolution":"{{resolution}}"},"quantity":"{{n:quantity}}"} */
+function renderTpl(tpl, vars) {
+  let out = JSON.stringify(tpl);
+  out = out.replace(/"\{\{n:([A-Za-z0-9_]+)\}\}"/g, function (m, k) {
+    const v = vars[k];
+    return (v === undefined || v === null || v === '') ? '0' : String(Number(v) || 0);
+  });
+  out = out.replace(/\{\{([A-Za-z0-9_]+)\}\}/g, function (m, k) {
+    const v = vars[k];
+    if (v === undefined || v === null) return '';
+    return String(v).replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\r?\n/g, ' ');
+  });
+  try { return JSON.parse(out); } catch (e) { return null; }
+}
+
 async function upstream(name, fallbackPath, payload) {
   const e = EP[name] || {};
   const pathname = e.path || fallbackPath;
@@ -127,6 +143,14 @@ async function upstream(name, fallbackPath, payload) {
   const body = Object.assign({}, payload || {});
   const token = body.token;
   delete body.token;
+  /* 适配器可给 body 模板（海螺式：{quantity,parameter:{...},projectID}）——模板里用 {{key}} 取 payload 里的字段 */
+  /* 模板优先级：本次调用从 models 映射带下来的 __tpl > 适配器 endpoints.task.body */
+  const tpl = body.__tpl || e.body;
+  delete body.__tpl;
+  if (tpl) {
+    const rendered = renderTpl(tpl, body);
+    if (rendered) { for (const k of Object.keys(body)) delete body[k]; Object.assign(body, rendered); }
+  }
   /* auth.type='hailuo_web'：海螺网页端协议（header token + header yy 签名 + 公共参数拼进 query）
      见 scripts/hailuo-sign.js。账号 token 支持 'token|uuid|device_id' 三段。*/
   const isHailuo = String(auth.type) === 'hailuo_web';
@@ -300,7 +324,7 @@ async function runPoolTask(opts) {
     hold(acct, need);
     let up;
     try {
-      up = await upstream('task', '/official/v2/task', { token: acct.token, model: opts.model, spec: opts.spec, cost: opts.cost });
+      up = await upstream('task', '/official/v2/task', Object.assign({ token: acct.token, model: opts.model, spec: opts.spec, cost: opts.cost }, opts.params || {}));
     } catch (e) {
       release(acct, need);
       return { ok: false, status: 502, code: 'upstream_error', message: String(e && e.message || e) };
@@ -312,9 +336,10 @@ async function runPoolTask(opts) {
       release(acct, need);
       db.prepare('UPDATE accounts SET success_count=success_count+1 WHERE id=?').run(acct.id);
       audit(acct.id, opts.apiKey, 'task_settled', (isFinite(wb) ? wb : undefined), (isFinite(wa) ? wa : undefined), 'model=' + opts.model + ' cost=' + opts.cost + ' attempts=' + attempt + ' adapter=' + ((ADAPTER && ADAPTER.name) || 'builtin'));
+      const isAsync = !!(EP.task && EP.task.async);
       return { ok: true, status: 200, account_id: acct.id, account_label: acct.label, attempts: attempt,
         wallet: { before: (isFinite(wb) ? wb : null), after: (isFinite(wa) ? wa : null), delta: Number(up.g.delta) || null },
-        upstream_task_id: up.g.task_id, result_url: up.g.result_url }; 
+        pending: isAsync, upstream_task_id: up.g.task_id, result_url: up.g.result_url }; 
     }
     const msg = String(up.json.message || up.json.error || '');
     if (up.status === 402 || /plan balance has run out/.test(msg)) {
@@ -530,6 +555,11 @@ async function handle(req, res) {
     const s = specOf(model);
     let cost = s.unit_credits;
     if (s.kind === 'chat') cost = 0;
+    /* 适配器给了 models 映射 -> 用上游真实单价与参数（海螺：modelID + resolution/aspectRatio/quality 的 valueStr） */
+    const mmap = (EP.task && EP.task.models) || null;
+    const mp = mmap && mmap[model] ? mmap[model] : null;
+    if (mp && mp.cost) cost = Number(mp.cost);
+    const taskParams = mp ? Object.assign({ prompt: String(body.prompt || body.desc || ''), quantity: Number(body.n || body.quantity || 1), limit: 20, __tpl: mp.body }, mp) : null;
     if (url === '/v1/audio/speech' && body.input) cost = Math.max(0.1, String(body.input).length * 0.1);
     const ch = chargeKey(a.key, cost);
     if (!ch.ok) return send(res, ch.err.status, ch.err);
@@ -540,7 +570,7 @@ async function handle(req, res) {
       if (s.kind === 'chat') {
         r = { ok: true, status: 200, account_id: null, account_label: '(M3 不扣 credit)', attempts: 0, upstream_task_id: null, result_url: null, text: 'mock: 这是平台池的 M3 文本回答（计入调用次数，不扣 credit）' };
       } else {
-        r = await runPoolTask({ model, spec: Object.assign({}, body), cost, apiKey: a.key.key });
+        r = await runPoolTask({ model, spec: Object.assign({}, body), cost, apiKey: a.key.key, params: taskParams });
       }
     } finally { inflight -= 1; }
 
@@ -550,12 +580,12 @@ async function handle(req, res) {
     }
     const taskId = 'task_' + crypto.randomBytes(6).toString('hex');
     db.prepare('INSERT INTO tasks (id,api_key,model,spec_json,status,credits_cost,account_id,attempts,upstream_task_id,result_url,error,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)')
-      .run(taskId, a.key.key, model, JSON.stringify({ prompt: body.prompt || null }), 'succeeded', cost, r.account_id, r.attempts, r.upstream_task_id, r.result_url, null, now(), now());
+      .run(taskId, a.key.key, model, JSON.stringify({ prompt: body.prompt || null }), (r.pending ? 'pending' : 'succeeded'), cost, r.account_id, r.attempts, r.upstream_task_id, r.result_url, null, now(), now());
     if (r.account_id) audit(r.account_id, a.key.key, 'task_ok', r.wallet.before, r.wallet.after, 'task=' + taskId + ' attempts=' + r.attempts);
     autoRevoke();
     if (s.kind === 'chat') return send(res, 200, { id: 'chatcmpl_' + taskId, object: 'chat.completion', model, choices: [{ index: 0, message: { role: 'assistant', content: r.text } }], usage: { total_tokens: 1 } });
     return send(res, 200, {
-      task_id: taskId, id: taskId, object: 'video.generation', model, status: 'succeeded',
+      task_id: taskId, id: taskId, object: 'video.generation', model, status: (r.pending ? 'processing' : 'succeeded'),
       account: { id: r.account_id, label: r.account_label, attempts: r.attempts },
       credits_charged: cost, wallet: r.wallet, video_url: r.result_url, url: r.result_url, data: [{ url: r.result_url }]
     });
@@ -619,8 +649,35 @@ async function handle(req, res) {
   return send(res, 404, { code: 'not_found', path: url });
 }
 
+/* ---------------- 异步任务轮询（海螺是异步：先拿 data.id，几秒后结果出现在 feed 列表） ---------------- */
+let pollBusy = false;
+async function pollPending() {
+  if (!EP.query) return;
+  const qcfg = EP.query.map || {};
+  const rows = db.prepare("SELECT * FROM tasks WHERE status='pending' AND upstream_task_id IS NOT NULL ORDER BY updated_at DESC LIMIT 50").all();
+  for (const t of rows) {
+    const acct = t.account_id ? getAccount(t.account_id) : null;
+    if (!acct) { db.prepare("UPDATE tasks SET status='failed', error='account_missing', updated_at=? WHERE id=?").run(now(), t.id); continue; }
+    const q = await upstream('query', '/api/feed/creation/search/my', { token: acct.token, limit: 20 });
+    if (q.status !== 200) continue;
+    const feeds = dig(q.json, qcfg.list_path || 'data.feeds');
+    if (!Array.isArray(feeds)) continue;
+    const hit = feeds.find((f) => String(dig(f, qcfg.id_path || 'commonInfo.id')) === String(t.upstream_task_id));
+    if (!hit) continue;
+    const st = Number(dig(hit, qcfg.status_path || 'commonInfo.status'));
+    const url = dig(hit, qcfg.url_path || 'metaInfo.imageMetaInfo.mediaInfo.url');
+    if (st === 2 && url) {
+      db.prepare("UPDATE tasks SET status='succeeded', result_url=?, updated_at=? WHERE id=?").run(String(url), now(), t.id);
+      audit(acct.id, t.api_key, 'task_polled', undefined, undefined, 'task=' + t.id + ' url_ok');
+    } else if (st === 6) {
+      db.prepare("UPDATE tasks SET status='failed', error='upstream_failed', updated_at=? WHERE id=?").run(now(), t.id);
+    }
+  }
+}
 let checkinBusy = false;
 setInterval(async () => { if (checkinBusy) return; checkinBusy = true; try { await checkinTick(); } finally { checkinBusy = false; } }, Math.min(CHECKIN_MS, 5000));
+
+setInterval(async () => { if (pollBusy) return; pollBusy = true; try { await pollPending(); } catch (e) {} finally { pollBusy = false; } }, Math.max(3000, Number(process.env.H3P_POLL_MS || 5000)));
 
 server.listen(PORT, '127.0.0.1', () => log('[h3-platform-pool] listening on 127.0.0.1:' + PORT + ' upstream=' + ADAPTER_BASE + ' (from ' + ADAPTER_BASE_SRC + ')' +
   ' checkin=' + CHECKIN_MS + 'ms daily=' + DAILY_CREDITS + ' reserve_x' + RESERVE_FACTOR + ' retries=' + MAX_RETRIES + ' inflight=' + MAX_INFLIGHT));
