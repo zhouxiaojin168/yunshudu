@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>yunshudu · 云数度 AI 网关</title>
+<meta name="description" content="yunshudu —— 自建 AI API 中转站：多 Key 渠道池、号池轮询、402→401 单号熔断。">
+<link rel="stylesheet" href="./styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%236aa8ff'/><text y='72' x='50' text-anchor='middle' font-size='62' font-family='sans-serif' fill='%23071018'>云</text></svg>">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap">
+    <div class="brand">
+      <div class="logo">云</div>
+      <span id="brandName">yunshudu</span>
+      <small>AI 网关 / 号池中转</small>
+    </div>
+    <nav class="menu">
+      <a href="#overview">概览</a>
+      <a href="#pricing">价目</a>
+      <a href="#access">接入</a>
+      <a href="#pool">号池原理</a>
+      <a href="#deploy">部署</a>
+    </nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="hero">
+    <span class="badge"><span class="dot" id="liveDot"></span><span id="liveText">正在读取站点状态…</span></span>
+    <h1>把 <span class="grad">号池</span> 摊开给你看的中转站<br>—— <span class="grad" id="heroName">yunshudu</span></h1>
+    <p class="lede">
+      多 Key 渠道池 · 轮询调度 · 额度耗尽单号熔断 · OpenAI 兼容协议。
+      这一页既是站点门户，也是这套机制的可视化说明书。
+    </p>
+    <div class="cta">
+      <a class="btn primary" id="panelBtn" href="http://127.0.0.1:3300" target="_blank" rel="noopener">进入控制台 →</a>
+      <button class="btn" id="refreshBtn">刷新站点数据</button>
+      <a class="btn" href="#access">查看接入示例</a>
+    </div>
+  </div>
+
+  <div class="stats" id="stats"></div>
+
+  <section id="overview">
+    <h2><span class="num">01</span>站点概览</h2>
+    <p class="sub">数据每次由 <span class="kv">scripts/build-site-json.js</span> 从本地网关抓取后内嵌进本页；在线时也可点右上"刷新"实时拉取。</p>
+    <div class="cards" id="overviewCards"></div>
+  </section>
+
+  <section id="pricing">
+    <h2><span class="num">02</span>模型价目</h2>
+    <p class="sub">计价方式与网关 <span class="kv">/api/pricing</span> 完全一致。固定单价模型按次计费，倍率模型按 token 折算。</p>
+    <div class="tablewrap">
+      <table>
+        <thead>
+          <tr><th>模型</th><th>计费方式</th><th>单价 / 倍率</th><th>分组</th><th>端点</th></tr>
+        </thead>
+        <tbody id="pricingBody"></tbody>
+      </table>
+    </div>
+    <div class="note">
+      <b>计价参数</b>：本币符号 <span class="kv" id="curSym">—</span> ·
+      汇率 <span class="kv" id="curRate">—</span> ·
+      额度单位 <span class="kv" id="qpu">—</span> ·
+      USD 汇率 <span class="kv" id="usdRate">—</span>
+    </div>
+  </section>
+
+  <section id="access">
+    <h2><span class="num">03</span>接入方式</h2>
+    <p class="sub">任何 OpenAI 兼容客户端都能直接用：把 Base URL 换成网关地址、Key 换成你在控制台签发的令牌即可。</p>
+    <div class="codebox">
+      <div class="codehead">
+        <span class="tab active" data-pane="pane-curl">curl</span>
+        <span class="tab" data-pane="pane-node">Node.js</span>
+        <span class="tab" data-pane="pane-py">Python</span>
+        <span class="tab" data-pane="pane-env">环境变量</span>
+        <button class="copy" data-copy="pane-curl">复制</button>
+      </div>
+      <div class="pane active" id="pane-curl"><pre><span class="c"># 文本对话</span>
+curl <span class="s">http://127.0.0.1:3300/v1/chat/completions</span> \
+  -H <span class="s">"Content-Type: application/json"</span> \
+  -H <span class="s">"Authorization: Bearer sk-你的令牌"</span> \
+  -d <span class="s">'{"model":"MiniMax-H3","messages":[{"role":"user","content":"你好"}]}'</span>
+
+<span class="c"># 看这个令牌能用哪些模型</span>
+curl <span class="s">http://127.0.0.1:3300/v1/models</span> -H <span class="s">"Authorization: Bearer sk-你的令牌"</span></pre></div>
+      <div class="pane" id="pane-node"><pre><span class="k">const</span> r = <span class="k">await</span> fetch(<span class="s">'http://127.0.0.1:3300/v1/chat/completions'</span>, {
+  method: <span class="s">'POST'</span>,
+  headers: {
+    <span class="s">'Content-Type'</span>: <span class="s">'application/json'</span>,
+    <span class="s">'Authorization'</span>: <span class="s">'Bearer sk-你的令牌'</span>
+  },
+  body: JSON.stringify({
+    model: <span class="s">'MiniMax-H3'</span>,
+    messages: [{ role: <span class="s">'user'</span>, content: <span class="s">'你好'</span> }]
+  })
+});
+console.log(<span class="k">await</span> r.json());</pre></div>
+      <div class="pane" id="pane-py"><pre><span class="k">from</span> openai <span class="k">import</span> OpenAI
+
+client = OpenAI(
+    base_url=<span class="s">"http://127.0.0.1:3300/v1"</span>,
+    api_key=<span class="s">"sk-你的令牌"</span>,
+)
+resp = client.chat.completions.create(
+    model=<span class="s">"MiniMax-H3"</span>,
+    messages=[{<span class="s">"role"</span>: <span class="s">"user"</span>, <span class="s">"content"</span>: <span class="s">"你好"</span>}],
+)
+<span class="k">print</span>(resp.choices[0].message.content)</pre></div>
+      <div class="pane" id="pane-env"><pre><span class="c"># 通用：很多客户端会读这两个环境变量</span>
+<span class="k">OPENAI_BASE_URL</span>=http://127.0.0.1:3300/v1
+<span class="k">OPENAI_API_KEY</span>=sk-你的令牌
+
+<span class="c"># Windows PowerShell</span>
+$env:OPENAI_BASE_URL=<span class="s">"http://127.0.0.1:3300/v1"</span>
+$env:OPENAI_API_KEY=<span class="s">"sk-你的令牌"</span></pre></div>
+    </div>
+    <div class="note">
+      <b>令牌在哪拿？</b> 打开控制台 → 令牌 → 新建。列表里显示的是 <span class="kv">sk-XXXX********XXXX</span> 脱敏串，
+      <b>请在创建时就把完整 key 复制走</b>；本地排查可用 <span class="kv">node scripts/show-tokens.js</span> 从 SQLite 读回明文。
+    </div>
+  </section>
+
+  <section id="pool">
+    <h2><span class="num">04</span>号池 / 算力池是怎么来的</h2>
+    <p class="sub">一个渠道 = 一个号池。这就是"无限算力"的全部秘密：<b>一批额度有限的 key 排队轮询</b>，池子续得上就继续跑。</p>
+
+    <div class="flow">
+      <div class="step"><div class="n">1</div><div>
+        <b>建池：把 N 把 key 塞进同一个渠道</b>
+        <p>渠道的 key 字段用换行拼接，建渠道时 <span class="hl">mode=multi_to_single</span>，否则池子静默失效。</p>
+      </div></div>
+      <div class="step"><div class="n">2</div><div>
+        <b>取号：轮询 / 随机</b>
+        <p><span class="hl">multi_key_mode=polling</span> 按顺序切号，<span class="hl">random</span> 随机切号；请求级递增，池内负载自然摊平。</p>
+      </div></div>
+      <div class="step"><div class="n">3</div><div>
+        <b>熔断：只踢坏掉的那一把</b>
+        <p><span class="hl">status_code_mapping={"402":"401"}</span> + <span class="hl">auto_ban=1</span> —— 上游额度耗尽的 402 被改写成 401（认证失败），于是只封这把 key，轮询自动换下一个号。</p>
+      </div></div>
+      <div class="step"><div class="n">4</div><div>
+        <b>整池：全灭才下线</b>
+        <p>池里 key 全部失效才禁用渠道；补进新 key 或上游恢复后自动重新启用。</p>
+      </div></div>
+    </div>
+
+    <div class="note">
+      <b>关键一步</b>：如果不做 <span class="kv">402→401</span> 映射，402 会被当成<b>渠道级故障</b>，整池一起挂 —— 很多站"一挂全挂"就死在这。
+    </div>
+
+    <div class="tablewrap" style="margin-top:16px">
+      <table>
+        <thead><tr><th>#</th><th>渠道</th><th>地址</th><th>模型</th><th>池</th><th>状态</th></tr></thead>
+        <tbody id="channelBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="deploy">
+    <h2><span class="num">05</span>本地 / 服务器部署</h2>
+    <p class="sub">本仓库自带一键脚本：免 Docker、Windows 直接跑；换 Linux 把 exe 换成对应架构二进制即可。</p>
+    <div class="codebox">
+      <div class="codehead"><span class="tab active">PowerShell</span><button class="copy" data-copy="pane-deploy">复制</button></div>
+      <div class="pane active" id="pane-deploy"><pre><span class="c"># 拉代码</span>
+git clone https://github.com/zhouxiaojin168/yunshudu.git
+cd yunshudu
+
+<span class="c"># 一条命令拉起全套（下载二进制 → 起网关 → 初始化 → 起模拟上游 → 建池 → 计价 → 冒烟）</span>
+powershell -ExecutionPolicy Bypass -File .\scripts\start-all.ps1
+
+<span class="c"># 起网页门户（可选）</span>
+node .\scripts\serve-web.js
+<span class="c">#  -> http://127.0.0.1:8899</span></pre></div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© <span id="year">2026</span> <span id="footName">yunshudu</span> · 自建 AI 网关 · 基于开源主干 self-hosted</span>
+    <span class="right" id="footMeta">—</span>
+  </div>
+</footer>
+
+<script id="snapshot" type="application/json">
+{"generatedAt":"2026-10-11T09:58:24.487Z","source":"http://127.0.0.1:3300","site":{"name":"yunshudu","version":"v1.0.0-rc.43","register_enabled":true,"password_register_enabled":true,"quota_per_unit":500000,"usd_exchange_rate":6.8,"price":7.3,"currency_symbol":"¤","currency_rate":1,"server_address":"http://localhost:3300","checkin_enabled":false,"pricing_version":"a42d372ccf0b5dd13ecf71203521f9d2"},"auto_groups":["default"],"vendors":[{"id":-1009,"name":"MiniMax","icon":"Minimax.Color"}],"usable_group":{"default":"Default group","vip":"VIP group"},"models":[{"model_name":"MiniMax-H3","quota_type":1,"model_price":0.047945205479,"model_ratio":0,"completion_ratio":0,"groups":["default"],"endpoints":["openai"]},{"model_name":"MiniMax-M3","quota_type":1,"model_price":0.047945205479,"model_ratio":0,"completion_ratio":0,"groups":["default"],"endpoints":["openai"]}],"channels":[{"id":9,"name":"本地演示-A组(健康池)","base_url":"http://127.0.0.1:9921","models":["MiniMax-H3","MiniMax-M3"],"status":1,"priority":5,"weight":10,"auto_ban":1,"is_multi_key":true,"key_count":2},{"id":10,"name":"本地演示-B组(欠费池)","base_url":"http://127.0.0.1:9922","models":["MiniMax-H3","MiniMax-M3"],"status":1,"priority":5,"weight":10,"auto_ban":1,"is_multi_key":false,"key_count":1}]}
+</script>
+<script src="./app.js"></script>
+</body>
+</html>

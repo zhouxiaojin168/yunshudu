@@ -60,5 +60,20 @@ if ($m.Count -gt 0) {
 Step 8 '端到端冒烟 (4 calls)'
 & $Node (Join-Path $PSScriptRoot 'test-call.js') 4
 
+# 9) 网页门户数据
+Step 9 '抓取站点快照 -> web/data/site.json'
+& $Node (Join-Path $PSScriptRoot 'build-site-json.js')
+
+# 10) 网页门户
+Step 10 '启动网页门户 (8899)'
+$webUp = $false
+try {
+  $c = New-Object Net.Sockets.TcpClient
+  $c.Connect('127.0.0.1', 8899); $webUp = $c.Connected; $c.Close()
+} catch {}
+if ($webUp) { Write-Host '    already listening on 8899' }
+else { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'start-web.ps1') }
+
 Write-Host ''
-Write-Host 'DONE -> panel http://127.0.0.1:3300  (see runtime\credentials.txt)' -ForegroundColor Green
+Write-Host 'DONE  panel : http://127.0.0.1:3300   (see runtime\credentials.txt)' -ForegroundColor Green
+Write-Host 'DONE  portal: http://127.0.0.1:8899' -ForegroundColor Green

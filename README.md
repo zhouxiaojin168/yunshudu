@@ -1,4 +1,6 @@
-# newapi-relay-stack · 中转站本地落地与"号池/算力池"机制复现
+# yunshudu · 自建 AI 中转站（号池 / 算力池）落地套件
+
+> **仓库名 = 站名**：yunshudu。一套免 Docker、自带网页版门户的 AI API 中转站。
 
 > 一套 **免 Docker、纯 Windows、开箱即跑** 的 AI 中转站（API 网关）本地环境。
 > 目的是把 `ifrogai.token6688.com` / `xuetianai.com` / `45.207.214.163:3000` 这类站点
@@ -38,6 +40,32 @@
 | Docker | **不需要** | 本方案专门走免 Docker 路线 |
 
 磁盘占用：`runtime\bin\new-api.exe` ≈ 131 MB，其余忽略不计。
+
+---
+
+## 1.5 网页版门户（`web/`）
+
+仓库自带一个**纯静态单页门户**，不需要构建、不需要 npm：
+
+```powershell
+node .\scripts\build-site-json.js    # 抓本地网关数据 -> web/data/site.json，并内嵌进 index.html
+node .\scripts\serve-web.js          # 起门户：http://127.0.0.1:8899
+# 或后台起
+powershell -ExecutionPolicy Bypass -File .\scripts\start-web.ps1
+```
+
+| 特性 | 说明 |
+|---|---|
+| 双模数据 | 页面内嵌快照（**双击 index.html 离线也能看**）+ 在线时自动 `fetch` 实时刷新 |
+| 同源代理 | `serve-web.js` 把 `/api/*`、`/v1/*` 反代到 `127.0.0.1:3300`，绕开浏览器跨域 |
+| 内容 | 站点概览 / 模型价目表（含按次·按量标签）/ 四种语言接入示例（可一键复制）/ 号池原理四步图 / 渠道池实况表 / 部署指引 |
+| 部署 | `web/` 是纯静态目录：丢到任意静态托管（GitHub Pages、Cloudflare Pages、nginx）即可 |
+
+
+![门户预览](./docs/portal-preview.png)
+
+> 仓库存的是**门户源码**；站点的"真身"是 new-api 网关（它是完整的管理前台 + API）。
+> 门户负责品牌、价目、接入文档与机制展示。
 
 ---
 
@@ -164,6 +192,11 @@ status_code_mapping = {"402":"401"}
 newapi-relay-stack\
 ├─ README.md                      你正在看的这份
 ├─ .gitignore                     已屏蔽 runtime 产物 / exe / 凭据
+├─ web\                            ★ 网页版门户（纯静态，可直接托管）
+│  ├─ index.html                  单页门户：概览 / 价目 / 接入 / 号池原理 / 部署
+│  ├─ styles.css
+│  ├─ app.js
+│  └─ data\site.json              数据快照（build-site-json.js 生成，并内嵌进 index.html）
 ├─ docs\
 │  └─ 本地落地实录.md              本轮实测取证（含 401 排查过程）
 ├─ config\                        （留空，站点参数由 bootstrap-local.js 写入 SQLite）
@@ -183,6 +216,11 @@ newapi-relay-stack\
    ├─ mock-pool.js                模拟上游：9921 健康池 / 9922 欠费池（带逐请求日志）
    ├─ setup-channels.js           幂等创建"多 Key 渠道池"渠道 + 测试令牌
    ├─ set-pricing.js              写 ModelPrice/ModelRatio/CompletionRatio
+   ├─ set-site.js                 登录 + 写站名等站点参数
+   ├─ login.js                    刷新 access_token（JWT 过期时用）
+   ├─ build-site-json.js          抓网关数据 -> web/data/site.json 并内嵌进 index.html
+   ├─ serve-web.js                网页门户服务器 8899 + /api 反代
+   ├─ start-web.ps1               后台起网页门户
    ├─ show-tokens.js              从 SQLite 读令牌明文（接口只返回脱敏值）
    └─ test-call.js                端到端压测
 ```
