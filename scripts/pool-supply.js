@@ -40,6 +40,8 @@ const NL = String.fromCharCode(10);
 const PORT = Number(process.env.SUPP_PORT || 9950);
 const POOL = String(process.env.SUPP_POOL_API || 'http://127.0.0.1:9940').replace(/\/+$/, '');
 const POOL_KEY = process.env.SUPP_POOL_ADMIN_KEY || 'sk-hl-admin';
+/* 本服务管理口的鉴权 key：写操作必须带 x-admin-key（服务器上从 secrets.txt 注入，密钥不入库） */
+const ADMIN_KEY = process.env.SUPP_ADMIN_KEY || process.env.SUPP_POOL_ADMIN_KEY || 'sk-hl-admin';
 const POOL_MIN = Number(process.env.SUPP_POOL_MIN || 5);
 const POOL_MAX = Number(process.env.SUPP_POOL_MAX || 200);
 const FARM_FILE = process.env.SUPP_FARM_FILE || path.join(ROOT, 'state', 'farm-accounts.jsonl');
@@ -300,6 +302,14 @@ async function guardRound(force) {
 const send = (res, code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(obj)); };
 const readBody = (req) => new Promise((resolve) => { let b = ''; req.on('data', (c) => { b += c; }); req.on('end', () => { let j = {}; try { j = b ? JSON.parse(b) : {}; } catch (e) {} resolve(j); }); });
 
+/* 写操作鉴权：x-admin-key 头 或 ?key= 查询参数；读接口(healthz/stats)保持开放便于排障 */
+function isAdmin(req, body) {
+  const h = String(req.headers['x-admin-key'] || '').trim();
+  const q = String((req.url.split('?')[1] || '')).split('&').find(function (x) { return x.indexOf('key=') === 0; });
+  const k = h || (q ? decodeURIComponent(q.slice(4)) : '') || String((body && body.admin_key) || '');
+  return k && k === ADMIN_KEY;
+}
+
 const server = http.createServer(async (req, res) => {
   const u = req.url.split('?')[0];
   try {
@@ -314,10 +324,12 @@ const server = http.createServer(async (req, res) => {
         accounts: h.accounts.map((a) => ({ id: a.id, label: a.label, credits: a.credits, held: a.held, healthy: a.healthy, fail_reason: a.fail_reason, checkin_count: a.checkin_count, success_count: a.success_count }))
       });
     }
-    if (req.method === 'POST' && u === '/supply/guard') { const body = await readBody(req); return send(res, 200, { ok: true, report: await guardRound(!!body.force) }); }
-    if (req.method === 'POST' && u === '/supply/checkin') { const r = await poolCheckin(); return send(res, r.status === 200 ? 200 : 502, r.json); }
+    if (req.method === 'POST' && u === '/supply/guard') { const body = await readBody(req); if (!isAdmin(req, body)) return send(res, 401, { code: 'admin_required', message: 'need x-admin-key' }); return send(res, 200, { ok: true, report: await guardRound(!!body.force) }); }
+    if (req.method === 'POST' && u === '/supply/checkin') { const body = await readBody(req); if (!isAdmin(req, body)) return send(res, 401, { code: 'admin_required', message: 'need x-admin-key' }); const r = await poolCheckin(); return send(res, r.status === 200 ? 200 : 502, r.json); }
     if (req.method === 'POST' && u === '/supply/import') {
-      const body = await readBody(req);
+      const _probe = await readBody(req);
+      if (!isAdmin(req, _probe)) return send(res, 401, { code: 'admin_required', message: 'need x-admin-key' });
+      const body = _probe;
       const list = Array.isArray(body.accounts) ? body.accounts : [];
       let ok = 0;
       const bulk = list.length ? await poolBulk(list) : { status: 0, json: {} };
@@ -327,6 +339,8 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, imported: ok, total: list.length });
     }
     if (req.method === 'POST' && u === '/supply/register') {
+      const _probe = await readBody(req);
+      if (!isAdmin(req, _probe)) return send(res, 401, { code: 'admin_required', message: 'need x-admin-key' });
       const body = await readBody(req);
       const times = Math.max(1, Number(body.n || 1));
       const done = [];
