@@ -1,14 +1,10 @@
 /**
- * build-site-json.js -- 把本地网关的实时信息抓成静态快照 web/data/site.json
+ * build-site-json.js -- 鎶婃湰鍦扮綉鍏崇殑瀹炴椂淇℃伅鎶撴垚闈欐€佸揩鐓?web/data/site.json
  *   node scripts/build-site-json.js
- * 静态站点即使离线打开也能显示内容；在线时网页会自动尝试刷新。
- *
- * ★ 幂等保证（2026-10-11 修）：
- *   网关 /api/pricing 的 models 数组顺序来自 Go map 迭代，定价缓存重建时会变一次，
- *   直接 JSON 比较会「每次都不同」→ auto-sync 形成无限提交循环。
- *   这里统一做 canonical 化：数组按稳定键排序 + 对象键排序 + 忽略 generatedAt，
- *   内容不变就绝不碰文件。
- */
+ * 闈欐€佺珯鐐瑰嵆浣跨绾挎墦寮€涔熻兘鏄剧ず鍐呭锛涘湪绾挎椂缃戦〉浼氳嚜鍔ㄥ皾璇曞埛鏂般€? *
+ * 鈽?骞傜瓑淇濊瘉锛?026-10-11 绗?2杞慨锛夛細
+ *   缃戝叧 /api/pricing 鐨?models 椤哄簭鏉ヨ嚜 Go map 杩唬锛屽畾浠风紦瀛橀噸寤烘椂浼氱炕涓€娆★紱
+ *   鐩存帴姣旇緝 JSON 浼氥€屾瘡娆￠兘涓嶅悓銆嶁啋 auto-sync 鏃犻檺鎻愪氦寰幆銆? *   鍋氭硶锛歝ompare 涓?write 閮借蛋 normSnap()锛堝璞￠敭鎺掑簭 + 鏁扮粍鎸夌ǔ瀹氶敭鎺掑簭 + 蹇界暐 generatedAt锛夈€? *   鍐呭璇箟涓嶅彉 鈫?缁濅笉纰版枃浠?鈫?涓嶄骇鐢熸彁浜ゃ€? */
 const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
@@ -23,11 +19,9 @@ const get = async (u) => {
   return r.json();
 };
 
-/* ---------- canonical 化工具 ---------- */
+/* ---------- canonical 鍖栧伐鍏?---------- */
 const asStr = (v) => (v === undefined || v === null ? '' : String(v));
-// 递归给对象键排序；数组保持原顺序（数组顺序由下面显式排序负责）
-function sortKeys(v) {
-  if (Array.isArray(v)) return v.map(sortKeys);
+function sortKeys(v) {                       // 閫掑綊閿帓搴忥紙鏁扮粍椤哄簭涓嶅姩锛?  if (Array.isArray(v)) return v.map(sortKeys);
   if (v && typeof v === 'object') {
     const o = {};
     for (const k of Object.keys(v).sort()) o[k] = sortKeys(v[k]);
@@ -35,10 +29,24 @@ function sortKeys(v) {
   }
   return v;
 }
-const canon = (o) => JSON.stringify(sortKeys(o));
-// 忽略时间戳后的规范串，用于「有没有真变化」判定
-const strip = (o) => { const c = JSON.parse(JSON.stringify(o)); delete c.generatedAt; return canon(c); };
-const sortArr = (a) => (Array.isArray(a) ? a.slice().sort() : a);
+const sortArr = (a) => (Array.isArray(a) ? a.map(x => (x && typeof x === 'object' ? (x.name || x.id || JSON.stringify(x)) : x)).sort() : a);
+
+/** 瑙勮寖鍖栧揩鐓э細鏁扮粍鎸夌ǔ瀹氶敭鎺掑簭 + 瀵硅薄閿帓搴?+ 鍘绘帀 generatedAt锛岀敤浜?璇箟鏄惁鍙樺寲"鍒ゅ畾 */
+function normSnap(o) {
+  const c = JSON.parse(JSON.stringify(o));
+  delete c.generatedAt;
+  if (Array.isArray(c.models)) {
+    for (const m of c.models) { m.groups = sortArr(m.groups || []); m.endpoints = sortArr(m.endpoints || []); }
+    c.models.sort((a, b) => asStr(a.model_name).localeCompare(asStr(b.model_name), 'en'));
+  }
+  if (Array.isArray(c.channels)) {
+    for (const ch of c.channels) { if (Array.isArray(ch.models)) ch.models = sortArr(ch.models); }
+    c.channels.sort((a, b) => Number(a.id) - Number(b.id));
+  }
+  if (Array.isArray(c.auto_groups)) c.auto_groups = sortArr(c.auto_groups);
+  if (Array.isArray(c.vendors)) c.vendors = sortArr(c.vendors);
+  return JSON.stringify(sortKeys(c));
+}
 
 (async () => {
   const status = (await get('/api/status')).data || {};
@@ -54,7 +62,7 @@ const sortArr = (a) => (Array.isArray(a) ? a.slice().sort() : a);
     completion_ratio: m.completion_ratio,
     groups: sortArr(m.enable_groups || []),
     endpoints: sortArr(m.supported_endpoint_types || [])
-  })).sort((a, b) => asStr(a.model_name).localeCompare(asStr(b.model_name), 'en'));   // ★ 消除顺序抖动
+  })).sort((a, b) => asStr(a.model_name).localeCompare(asStr(b.model_name), 'en'));   // 鈽?娑堥櫎椤哄簭鎶栧姩
 
   let channels = [];
   try {
@@ -101,33 +109,35 @@ const sortArr = (a) => (Array.isArray(a) ? a.slice().sort() : a);
 
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
 
-  // ★ 幂等写入：内容和上次一样（忽略 generatedAt，且已 canonical 化）就不动文件
+  // 鈽?骞傜瓑鍐欏叆锛氳涔変笉鍙橈紙蹇界暐 generatedAt銆佸拷鐣ユ暟缁勯『搴忥級灏辩粷涓嶇鏂囦欢
   let prev = null;
   try { prev = JSON.parse(fs.readFileSync(OUT, 'utf8').replace(/^\uFEFF/, '')); } catch (e) {}
-  if (prev && strip(prev) === strip(snap)) {
+  if (prev && normSnap(prev) === normSnap(snap)) {
     console.log('snapshot unchanged -> skip write (' + OUT + ')');
     return;
   }
 
   const body = JSON.stringify(snap, null, 2);
-  if (!(prev && fs.existsSync(OUT) && fs.readFileSync(OUT, 'utf8') === body)) {
-    fs.writeFileSync(OUT, body, 'utf8');
-    console.log('written -> ' + OUT);
-  }
+  fs.writeFileSync(OUT, body, 'utf8');
+  console.log('written -> ' + OUT);
   console.log('  site       = ' + snap.site.name + '  version=' + snap.site.version);
   console.log('  models     = ' + compact.length);
   console.log('  channels   = ' + channels.length + '  (multi-key: ' + channels.filter(c => c.is_multi_key).length + ')');
 
-  // 顺手把快照内嵌进 index.html —— 这样直接双击打开网页也能看到数据（同样幂等）
+  // 椤烘墜鎶婂揩鐓у唴宓岃繘 index.html锛堝悓鏍峰箓绛夛細鍐呭祵鍖哄鐨勫唴瀹逛竴寰嬩笉鍔級
   if (fs.existsSync(IDX)) {
     const html = fs.readFileSync(IDX, 'utf8');
     const re = /(<script id="snapshot" type="application\/json">)[\s\S]*?(<\/script>)/;
     if (re.test(html)) {
-      const out = html.replace(re, '$1\n' + JSON.stringify(snap) + '\n$2');
-      if (out !== html) { fs.writeFileSync(IDX, out, 'utf8'); console.log('snapshot injected -> web/index.html'); }
-      else console.log('index.html unchanged');
+      const cur = (html.match(re) || [])[0] || '';
+      const next = html.replace(re, '$1\n' + JSON.stringify(snap) + '\n$2');
+      const curJson = cur.replace(/^<script id="snapshot" type="application\/json">/, '').replace(/<\/script>$/, '').trim();
+      let same = false;
+      try { same = normSnap(JSON.parse(curJson)) === normSnap(snap); } catch (e) {}
+      if (same) console.log('index.html unchanged');
+      else { fs.writeFileSync(IDX, next, 'utf8'); console.log('snapshot injected -> web/index.html'); }
     } else {
-      console.log('[warn] web/index.html 里没找到 #snapshot 占位');
+      console.log('[warn] web/index.html 閲屾病鎵惧埌 #snapshot 鍗犱綅');
     }
   }
 })();
