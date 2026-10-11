@@ -21,6 +21,7 @@ Add-Type -Namespace PB -Name U -MemberDefinition @'
 [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool alt);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
 [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, System.UIntPtr extra);
+[DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string win);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, System.Text.StringBuilder s, int n);
 [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n);
 '@
@@ -34,9 +35,15 @@ if ($KillLocalRun) {
   for ($i = 0; $i -lt 3; $i++) { if ($wsh.AppActivate('运行')) { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 400; Write-Host ('  closed local Run on try ' + $i) } else { break } }
   Start-Sleep -Milliseconds 300
 }
-$p = Get-Process mstsc -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object StartTime -Descending | Select-Object -First 1
-if (-not $p) { Write-Host 'NO mstsc'; exit 1 }
-$h = $p.MainWindowHandle
+$h = [PB.U]::FindWindowW('TscShellContainerClass', $null)
+if ($h -eq [IntPtr]::Zero) {
+  $mstscP = Get-Process mstsc -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object StartTime -Descending | Select-Object -First 1
+  if (-not $mstscP) { Write-Host 'NO mstsc'; exit 1 }
+  $h = $mstscP.MainWindowHandle
+}
+$mspid = [uint32]0
+[void][PB.U]::GetWindowThreadProcessId($h, [ref]$mspid)
+$p = New-Object psobject -Property @{ Id = $mspid }
 Write-Host ('mstsc pid=' + $p.Id + ' hwnd=' + $h + ' title=' + (WTitle $h) + ' class=' + (WClass $h))
 $HWND_TOPMOST = [IntPtr](-1); $HWND_NOTOPMOST = [IntPtr](-2); $SWP = 0x0001 -bor 0x0002 -bor 0x0040
 $tries = 0; $got = $false
