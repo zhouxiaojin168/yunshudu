@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "root": "C:\\yunshudu",
+  "note": "服务器侧服务清单：post-deploy.ps1 读本文件逐个确保服务存活；run-service.ps1 按名字启动单个服务。",
+  "services": [
+    {
+      "name": "new-api",
+      "type": "exe",
+      "task": "yunshudu-new-api",
+      "managed": "external",
+      "port": 3000,
+      "critical": true,
+      "launcher": "run-new-api.ps1",
+      "launcherArgs": [],
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:3000/api/status",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 15,
+        "intervalSec": 2
+      }
+    },
+    {
+      "name": "edge-proxy",
+      "type": "node",
+      "task": "yunshudu-edge",
+      "managed": "auto",
+      "port": 80,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\edge-proxy.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "edge-proxy"
+      ],
+      "env": {
+        "EDGE_PORT": "80",
+        "EDGE_HOST": "0.0.0.0",
+        "EDGE_UPSTREAM": "http://127.0.0.1:3000",
+        "EDGE_LOG_DIR": "C:\\yunshudu\\logs"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1/__edge/health",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      }
+    }
+  ]
+}
