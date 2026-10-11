@@ -185,15 +185,19 @@ function bump(why) {
   }, DEBOUNCE_MS);
 }
 
-const SKIP = [path.sep + '.git' + path.sep, path.sep + 'runtime' + path.sep, path.sep + 'node_modules' + path.sep];
+/* ★ 忽略规则：Node 在 Windows 上递归 fs.watch 只报顶层名（例如事件名就是 '.git'，
+   不带子路径），所以必须按「首段路径」判断，不能按 '...\.git\...' 子串判断，
+   否则 git add 产生的 .git 事件会让同步每 8 秒自循环一次（实测踩过）。 */
+const IGNORE_TOP = new Set(['.git', 'runtime', 'node_modules']);
 try {
   fs.watch(ROOT, { recursive: true }, (ev, name) => {
     if (!name) return;
-    const full = path.sep + name;
-    if (SKIP.some(s => full.includes(s))) return;
-    if (name.endsWith('.log') || name.endsWith('.pid') || name.endsWith('.tmp')) return;
+    const rel = String(name).replace(/^[\\/]+/, '');
+    const top = rel.split(/[\\/]/)[0];
+    if (IGNORE_TOP.has(top)) return;
+    if (/\.(log|pid|tmp)$/i.test(rel)) return;
     if (syncing) { pendingAgain = true; return; }   // 同步中：记下来，结束后补一轮
-    bump(name);
+    bump(rel);
   });
   log('  fs.watch 已挂载（recursive）');
 } catch (e) {
