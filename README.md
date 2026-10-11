@@ -242,6 +242,34 @@ newapi-relay-stack\
 
 ---
 
+## 5.5 自动同步到 GitHub（auto-sync）
+
+改完本地文件不用手动推，两种方式：
+
+```powershell
+# ① 实时监听（推荐）：文件一变，防抖 8 秒后自动 commit + push
+powershell -ExecutionPolicy Bypass -File .\scripts\start-autosync.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-autosync.ps1     # 停
+
+# ② 计划任务兜底（每 10 分钟一次，重启也不怕）
+powershell -ExecutionPolicy Bypass -File .\scripts\install-autosync-task.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\install-autosync-task.ps1 -Uninstall
+```
+
+`scripts\auto-sync.js` 每次同步的流程：
+
+```
+重建网页快照 -> git add -A -> 没变化就跳过
+            -> 敏感信息自检（命中就中止，不提交不推送）
+            -> git commit -> git push
+```
+
+- 日志：`runtime\logs\auto-sync.log`
+- **token 只放仓库外**：`$env:CODEX_HOME\work\tools\gh-token.json`（或环境变量 `GITHUB_TOKEN`），**绝不写进仓库**
+- 敏感自检会拦下 `sk-xxx` / JWT / `password:` / 私钥，并且 `runtime/github-token.txt`、`runtime/credentials.txt`、`runtime/test-token.txt` 三个文件**永远拒绝入库**（双保险）
+- 推送后 GitHub Pages 会自动重新部署，约 1 分钟生效
+
+---
 ## 6. 踩过的坑（照抄能省 2 小时）
 
 1. **建渠道的 `mode` 必须是 `multi_to_single`**。用 `single` 建出来 `multi_key=false`，池子静默失效。
