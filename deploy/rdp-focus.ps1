@@ -5,6 +5,9 @@
       powershell ... -File .\rdp-focus.ps1 -Command '\\tsclient\C\rdpshare\b.cmd' -ShotEach     # 抢焦点后 Win+R 粘贴执行
 #>
 param(
+  [string]$SendKeys = '',
+  [int]$AfterKeysMs = 1500,
+  [string]$ClipText = '',
   [string]$Command = '',
   [int]$StepDelayMs = 1200,
   [string]$Tag = 'f',
@@ -63,6 +66,22 @@ Start-Sleep -Milliseconds 600
 $fg2 = [N.U]::GetForegroundWindow()
 Write-Host ('  SetForegroundWindow=' + $ok)
 Write-Host ('  foreground now = ' + $fg2 + '  title=' + (WinTitle $fg2) + '  isMstsc=' + ($fg2 -eq $h))
+if ($SendKeys -ne '') {
+  Start-Sleep -Milliseconds 500
+  if ($ClipText -ne '') { Set-Clipboard -Value $ClipText; Start-Sleep -Milliseconds 600 }
+  [System.Windows.Forms.SendKeys]::SendWait($SendKeys)
+  Write-Host ('  sent SendKeys: ' + $SendKeys)
+  Start-Sleep -Milliseconds $AfterKeysMs
+  if ($ShotEach) { Shot ($Tag + '-keys') }
+}
+if ($SendKeys -ne '') {
+  Start-Sleep -Milliseconds 500
+  if ($ClipText -ne '') { Set-Clipboard -Value $ClipText; Start-Sleep -Milliseconds 600 }
+  [System.Windows.Forms.SendKeys]::SendWait($SendKeys)
+  Write-Host ('  sent SendKeys: ' + $SendKeys)
+  Start-Sleep -Milliseconds $AfterKeysMs
+  if ($ShotEach) { Shot ($Tag + '-keys') }
+}
 if ($Command -eq '') { exit 0 }
 if ($fg2 -ne $h) { Write-Host '  !! 焦点仍未抢到，放弃发键（避免误伤本机）'; exit 2 }
 
