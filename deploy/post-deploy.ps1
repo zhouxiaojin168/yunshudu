@@ -1,9 +1,10 @@
 ﻿<#
   post-deploy.ps1 -- 部署后钩子（由 deploy-agent.ps1 在服务器上调用）
     1) 读 <Root>\app\services.json 拿到服务清单（缺失时退回只保 new-api）
-    2) 逐个做健康检查（http 或 tcp），不健康就：确保计划任务存在 -> 拉起 -> 重试 -> 仍不行就杀掉端口占用者再拉起
-    3) 打印汇总，关键服务（critical=true）失败会显式报警
-    参数: -Root C:\yunshudu  -Sha <commit>
+    2) 逐个健康检查（http / tcp）
+    3) 不健康时**硬重启**：停计划任务 -> 按 pid 文件杀 -> 按端口占用杀 -> 再拉起 -> 重试
+       （只停任务不管旧进程会死锁：任务 Running 但跑的是旧配置，Start-ScheduledTask 是空操作）
+    4) 打印汇总；critical=true 的服务失败会显式报警
 #>
 param(
   [string]$Root = 'C:\yunshudu',
@@ -48,7 +49,7 @@ function Ensure-Task($svc) {
   $t = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
   if ($t) { return $true }
   if ([string]$svc.managed -ne 'auto') {
-    Write-Output ('    task ' + $name + ' missing and managed=' + [string]$svc.managed + ' (不自动注册)')
+    Write-Output ('    task ' + $name + ' missing and managed=' + [string]$svc.managed)
     return $false
   }
   $launcher = Join-Path $Root ([string]$svc.launcher)
@@ -70,12 +71,46 @@ function Ensure-Task($svc) {
   }
 }
 
-function Start-SvcTask($svc) {
-  $name = [string]$svc.task
-  if (-not $name) { return }
-  $st = (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue).State
-  Write-Output ('    task ' + $name + ' state=' + $st)
-  Start-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+function Svc-Ports($svc) {
+  $list = @()
+  if ($svc.ports) { foreach ($x in @($svc.ports)) { $list += [int]$x } }
+  if ($svc.port)  { $list += [int]$svc.port }
+  return ($list | Select-Object -Unique)
+}
+
+function Hard-Restart($svc, $hasTask) {
+  $name = [string]$svc.name
+  $task = [string]$svc.task
+  if ($hasTask -and $task) {
+    Write-Output ('    stopping task ' + $task)
+    Stop-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 2
+  }
+
+  $pidF = Join-Path $Root ('logs\' + $name + '.pid')
+  if (Test-Path $pidF) {
+    $old = 0
+    try { $old = [int]((Get-Content -LiteralPath $pidF -Raw).Trim()) } catch { $old = 0 }
+    if ($old -gt 0) {
+      try { Stop-Process -Id $old -Force -ErrorAction Stop; Write-Output ('    killed pid-file ' + $old) }
+      catch { Write-Output ('    pid-file ' + $old + ' not alive') }
+    }
+  }
+
+  foreach ($pt in (Svc-Ports $svc)) {
+    $own = Get-NetTCPConnection -LocalPort $pt -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($own) {
+      try { Stop-Process -Id $own.OwningProcess -Force -ErrorAction Stop; Write-Output ('    killed port ' + $pt + ' owner pid=' + $own.OwningProcess) }
+      catch { Write-Output ('    kill port ' + $pt + ' owner failed: ' + $_.Exception.Message) }
+    }
+  }
+
+  Start-Sleep -Seconds 3
+  if ($hasTask -and $task) {
+    $st = (Get-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue).State
+    Write-Output ('    task ' + $task + ' state=' + $st + ' -> start')
+    Start-ScheduledTask -TaskName $task -ErrorAction SilentlyContinue
+  }
 }
 
 # ---- 读服务清单 ----
@@ -89,7 +124,7 @@ if (Test-Path $svcFile) {
   } catch { Write-Output ('  services.json parse FAIL ' + $_.Exception.Message) }
 }
 if ($svcs.Count -eq 0) {
-  Write-Output '  !! services.json 不可用 -> 退回只保 new-api'
+  Write-Output '  !! services.json unavailable -> fallback to new-api only'
   $svcs = @([pscustomobject]@{ name = 'new-api'; type = 'exe'; task = 'yunshudu-new-api'; port = 3000; managed = 'external'; critical = $true })
 }
 
@@ -110,23 +145,19 @@ foreach ($s in $svcs) {
 
   Write-Output ('  [' + $nm + '] down -> ensuring task')
   $hasTask = Ensure-Task $s
-  if ($hasTask) { Start-SvcTask $s }
 
+  # 第一轮：只拉起（不动进程），适合「进程没在跑」的常见情况
+  if ($hasTask) { Start-ScheduledTask -TaskName ([string]$s.task) -ErrorAction SilentlyContinue }
   $ok = $false
-  for ($i = 0; $i -lt $retries; $i++) {
+  for ($i = 0; $i -lt [Math]::Min($retries, 8); $i++) {
     Start-Sleep -Seconds $interval
     if (Test-SvcHealth $s) { $ok = $true; break }
   }
 
-  if (-not $ok -and $s.port) {
-    Write-Output ('  [' + $nm + '] still down -> kill port owner on ' + [string]$s.port + ' and restart')
-    $own = Get-NetTCPConnection -LocalPort ([int]$s.port) -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($own) {
-      try { Stop-Process -Id $own.OwningProcess -Force -ErrorAction Stop; Write-Output ('    killed pid ' + $own.OwningProcess) }
-      catch { Write-Output ('    kill failed: ' + $_.Exception.Message) }
-    }
-    Start-Sleep -Seconds 2
-    if ($hasTask) { Start-SvcTask $s }
+  # 第二轮：硬重启（停任务 + 杀旧进程 + 再拉起）
+  if (-not $ok) {
+    Write-Output ('  [' + $nm + '] still down -> hard restart')
+    Hard-Restart $s $hasTask
     for ($i = 0; $i -lt $retries; $i++) {
       Start-Sleep -Seconds $interval
       if (Test-SvcHealth $s) { $ok = $true; break }
