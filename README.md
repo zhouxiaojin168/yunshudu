@@ -41,7 +41,19 @@
 
 ---
 
-## 2. 三步跑起来
+## 2. 跑起来（一键 · 或手动分步）
+
+### 2.0 懒人版：一条命令
+
+```powershell
+cd E:\中转站测试\newapi-relay-stack
+powershell -ExecutionPolicy Bypass -File .\scripts\start-all.ps1
+```
+
+它会依次做 8 步（下载二进制 → 起网关 → 初始化 → 起模拟上游 → 建渠道池 → 写计价 → 修正令牌明文 → 4 次冒烟），
+幂等可重复执行。下面是想手动分步时看的。
+
+### 2.1 手动三步
 
 ```powershell
 cd E:\中转站测试\newapi-relay-stack
@@ -60,7 +72,7 @@ node .\scripts\bootstrap-local.js
 
 > ⚠️ `runtime\credentials.txt` 含 root 密码与 access_token，**已在 .gitignore 中，切勿外传**。
 
-### 2.1 起"上游号池"实验环境（可选但强烈建议）
+### 2.2 起"上游号池"实验环境（手动分步版）
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start-mock-pool.ps1   # 9921 健康池 / 9922 欠费池
@@ -166,7 +178,8 @@ newapi-relay-stack\
    ├─ download-release.ps1        下载 + SHA256 校验
    ├─ start-local-windows.ps1     免 Docker 启动网关
    ├─ bootstrap-local.js          初始化 root + 写站点参数
-   ├─ start-mock-pool.ps1         起模拟上游
+   ├─ start-all.ps1              一键全流程（下载+起服+建池+计价+冒烟，幂等）
+   ├─ start-mock-pool.ps1        起模拟上游
    ├─ mock-pool.js                模拟上游：9921 健康池 / 9922 欠费池（带逐请求日志）
    ├─ setup-channels.js           幂等创建"多 Key 渠道池"渠道 + 测试令牌
    ├─ set-pricing.js              写 ModelPrice/ModelRatio/CompletionRatio
