@@ -179,7 +179,7 @@ function bump(why) {
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     pending = false;
-    sync('文件变化');
+    sync('文件变化: ' + why);
     // 本轮结束后，如果同步期间还有事件，补一轮（避免 300s 兜底前干等）
     if (pendingAgain) { pendingAgain = false; log('  同步期间有新改动 -> 立刻补一轮'); setTimeout(() => sync('补同步'), 1500); }
   }, DEBOUNCE_MS);
