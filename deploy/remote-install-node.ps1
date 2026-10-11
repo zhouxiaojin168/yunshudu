@@ -2,17 +2,18 @@
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 $ProgressPreference = 'SilentlyContinue'
 $root = 'C:\yunshudu'
-$cands = @('v24.21.0', 'v22.23.3')
+$cands = @('v24.21.0','v22.23.3')
 foreach ($ver in $cands) {
   $name = 'node-' + $ver + '-win-x64'
   $dir  = Join-Path $root ('node-' + $ver)
   $exe  = Join-Path $dir 'node.exe'
   if (-not (Test-Path $exe)) {
-    $zip = Join-Path $root ($name + '.zip')
-    $urls = @(
-      'https://registry.npmmirror.com/-/binary/node/' + $ver + '/' + $name + '.zip',
-      'https://nodejs.org/dist/' + $ver + '/' + $name + '.zip'
-    )
+    $zip  = Join-Path $root ($name + '.zip')
+    $u1 = 'https://registry.npmmirror.com/-/binary/node/' + $ver + '/' + $name + '.zip'
+    $u2 = 'https://nodejs.org/dist/' + $ver + '/' + $name + '.zip'
+    $urls = New-Object System.Collections.ArrayList
+    [void]$urls.Add($u1)
+    [void]$urls.Add($u2)
     $got = $false
     foreach ($u in $urls) {
       try {
@@ -28,6 +29,7 @@ foreach ($ver in $cands) {
     if (Test-Path $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force }
     Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
     $d = Get-ChildItem -LiteralPath $tmp -Directory | Select-Object -First 1
+    if (Test-Path $dir) { Remove-Item -LiteralPath $dir -Recurse -Force }
     Move-Item -LiteralPath $d.FullName -Destination $dir
     Remove-Item -LiteralPath $zip -Force
     Remove-Item -LiteralPath $tmp -Recurse -Force
