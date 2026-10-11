@@ -22,9 +22,10 @@ $profile = Join-Path $env:TEMP ('edge-headless-' + [guid]::NewGuid().ToString('N
 $dom = Join-Path $OutDir 'live-dom.html'
 $png = Join-Path $OutDir 'live-portal.png'
 
+$ErrorActionPreference = 'Continue'
 $common = @('--headless=new','--disable-gpu','--no-first-run','--no-default-browser-check','--hide-scrollbars',('--user-data-dir=' + $profile))
-& $edge @common '--virtual-time-budget=20000' '--window-size=1200,2400' ('--screenshot=' + $png) $Url 2>$null | Out-Null
-& $edge @common '--virtual-time-budget=20000' '--dump-dom' $Url 2>$null | Out-File -LiteralPath $dom -Encoding UTF8
+& $edge @common '--virtual-time-budget=20000' '--window-size=1200,2400' ('--screenshot=' + $png) $Url 2>&1 | Out-Null
+& $edge @common '--virtual-time-budget=20000' '--dump-dom' $Url 2>&1 | Out-File -LiteralPath $dom -Encoding UTF8
 
 Write-Host ('DOM  -> ' + $dom)
 Write-Host ('PNG  -> ' + $png)
