@@ -19,7 +19,9 @@
         "timeoutSec": 5,
         "retries": 15,
         "intervalSec": 2
-      }
+      },
+      "restartOnDeploy": false,
+      "restartOnDeployNote": "二进制在仓库外，重启会丢内存态，只在健康检查失败时重启"
     },
     {
       "name": "edge-proxy",
@@ -56,7 +58,9 @@
         80,
         8080
       ],
-      "note": "机房公网 80 被透明截持（Apache 301 -> 183.136.132.24），故同时听 8080；80 留待备案/解封。EDGE_RL_MAX=每IP每分钟上限（0=不限流）；EDGE_ACCESS_LOG=1 记录每条请求（默认只记慢请求和错误）"
+      "note": "机房公网 80 被透明截持（Apache 301 -> 183.136.132.24），故同时听 8080；80 留待备案/解封。EDGE_RL_MAX=每IP每分钟上限（0=不限流）；EDGE_ACCESS_LOG=1 记录每条请求（默认只记慢请求和错误）",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
     {
       "name": "cloudflared",
@@ -86,7 +90,9 @@
         "timeoutSec": 5,
         "retries": 15,
         "intervalSec": 3
-      }
+      },
+      "restartOnDeploy": false,
+      "restartOnDeployNote": "重启会更换临时隧道域名，只在健康检查失败时重启"
     },
     {
       "name": "tunnel-watch",
@@ -116,7 +122,9 @@
         "maxAgeSec": 300,
         "retries": 10,
         "intervalSec": 3
-      }
+      },
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
     {
       "name": "portal",
@@ -148,7 +156,10 @@
         "timeoutSec": 5,
         "retries": 10,
         "intervalSec": 2
-      }
+      },
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
-  ]
+  ],
+  "restartOnDeployDoc": "restartOnDeploy=true: 每次部署都硬重启该服务（用于仓库内的 Node 脚本，保证新代码生效）。false/缺省: 仅当健康检查失败才重启。"
 }

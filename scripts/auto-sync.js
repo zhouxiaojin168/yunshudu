@@ -33,7 +33,7 @@ const argv = process.argv.slice(2);
 const ONCE = argv.includes('--once');
 const argOf = (name, dflt) => { const i = argv.indexOf(name); return i >= 0 ? Number(argv[i + 1]) : dflt; };
 const DEBOUNCE_MS = argOf('--debounce', 8) * 1000;
-const INTERVAL_MS = argOf('--interval', 300) * 1000;
+const INTERVAL_MS = argOf('--interval', 60) * 1000;   // 兜底扫描间隔：fs.watch 在 Windows 上偶尔漏事件，靠这个保底
 
 let syncing = false;      // 串行锁
 let pendingAgain = false; // 同步期间到达的事件（不丢）
@@ -132,6 +132,21 @@ function rebuildSnapshot() {
   else log('  快照重建跳过（网关可能没开）');
 }
 
+function sleepSync(ms) {
+  try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) {}
+}
+
+/* 兜底分批 add：文件刚写完的同一秒里 git 可能因 mtime 精度漏掉改动 -> 重试几次 */
+function stageAll() {
+  for (let i = 0; i < 4; i++) {
+    const r = git(['add', '-A']);
+    if (r.status !== 0) return r;
+    if (!isDirty()) return r;
+    sleepSync(1200);
+  }
+  return git(['add', '-A']);
+}
+
 function isDirty() {
   const st = git(['status', '--porcelain']);
   return !!(st.stdout || '').trim();
@@ -147,7 +162,7 @@ function doSync(reason) {
   log(`同步开始（${reason}）`);
   rebuildSnapshot();
 
-  let r = git(['add', '-A']);
+  let r = stageAll();
   if (r.status !== 0) return log('  git add 失败: ' + (r.stderr || '').trim());
 
   if (isDirty()) {

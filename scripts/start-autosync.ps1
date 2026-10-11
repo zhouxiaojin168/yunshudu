@@ -1,6 +1,6 @@
 ﻿# start-autosync.ps1 -- 后台常驻：本地改动实时自动同步到 GitHub
 #   日志: runtime\logs\autosync.out.log  /  runtime\logs\auto-sync.log
-param([int]$IntervalSec = 300, [int]$DebounceSec = 8)
+param([int]$IntervalSec = 60, [int]$DebounceSec = 8)
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $PSScriptRoot
 $LogDir = Join-Path $Root 'runtime\logs'

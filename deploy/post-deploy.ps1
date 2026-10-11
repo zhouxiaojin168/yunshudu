@@ -147,36 +147,49 @@ foreach ($s in $svcs) {
     if ($s.health.intervalSec) { $interval = [int]$s.health.intervalSec }
   }
 
-  if (Test-SvcHealth $s) {
+  $healthy = Test-SvcHealth $s
+  $forceRestart = ($s.restartOnDeploy -eq $true)
+
+  if ($healthy -and -not $forceRestart) {
     Write-Output ('  [' + $nm + '] healthy')
     $results += ($nm + '=OK')
     continue
   }
 
-  Write-Output ('  [' + $nm + '] down -> ensuring task')
   $hasTask = Ensure-Task $s
-
-  # 第一轮：只拉起（不动进程），适合「进程没在跑」的常见情况
-  if ($hasTask) { Start-ScheduledTask -TaskName ([string]$s.task) -ErrorAction SilentlyContinue }
   $ok = $false
-  for ($i = 0; $i -lt [Math]::Min($retries, 8); $i++) {
-    Start-Sleep -Seconds $interval
-    if (Test-SvcHealth $s) { $ok = $true; break }
-  }
 
-  # 第二轮：硬重启（停任务 + 杀旧进程 + 再拉起）
-  if (-not $ok) {
-    Write-Output ('  [' + $nm + '] still down -> hard restart')
+  if ($forceRestart) {
+    # 代码可能已变（仓库里的脚本），必须重启才能加载新代码
+    Write-Output ('  [' + $nm + '] restartOnDeploy -> hard restart to load new code')
     Hard-Restart $s $hasTask
     for ($i = 0; $i -lt $retries; $i++) {
       Start-Sleep -Seconds $interval
       if (Test-SvcHealth $s) { $ok = $true; break }
     }
+  } else {
+    Write-Output ('  [' + $nm + '] down -> ensuring task')
+    # 第一轮：只拉起（不动进程），适合「进程没在跑」的常见情况
+    if ($hasTask) { Start-ScheduledTask -TaskName ([string]$s.task) -ErrorAction SilentlyContinue }
+    for ($i = 0; $i -lt [Math]::Min($retries, 8); $i++) {
+      Start-Sleep -Seconds $interval
+      if (Test-SvcHealth $s) { $ok = $true; break }
+    }
+    # 第二轮：硬重启（停任务 + 杀旧进程 + 再拉起）
+    if (-not $ok) {
+      Write-Output ('  [' + $nm + '] still down -> hard restart')
+      Hard-Restart $s $hasTask
+      for ($i = 0; $i -lt $retries; $i++) {
+        Start-Sleep -Seconds $interval
+        if (Test-SvcHealth $s) { $ok = $true; break }
+      }
+    }
   }
 
   if ($ok) {
-    Write-Output ('  [' + $nm + '] recovered')
-    $results += ($nm + '=RECOVERED')
+    if ($forceRestart -and $healthy) { $results += ($nm + '=RESTARTED') }
+    else { $results += ($nm + '=RECOVERED') }
+    Write-Output ('  [' + $nm + '] ok (restartOnDeploy=' + $forceRestart + ')')
   } else {
     Write-Output ('  [' + $nm + '] !! STILL DOWN')
     $results += ($nm + '=DOWN')
@@ -186,4 +199,3 @@ foreach ($s in $svcs) {
 
 Write-Output ('  summary: ' + ($results -join ' '))
 Write-Output 'post-deploy done'
-
