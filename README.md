@@ -268,6 +268,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-autosync-task.ps1 -Un
 - **token 只放仓库外**：`$env:CODEX_HOME\work\tools\gh-token.json`（或环境变量 `GITHUB_TOKEN`），**绝不写进仓库**
 - 敏感自检会拦下 `sk-xxx` / JWT / `password:` / 私钥，并且 `runtime/github-token.txt`、`runtime/credentials.txt`、`runtime/test-token.txt` 三个文件**永远拒绝入库**（双保险）
 - 推送后 GitHub Pages 会自动重新部署，约 1 分钟生效
+- **防自触发**：网页快照是"幂等写入"的（内容没变就不动文件），同步期间还会暂时屏蔽自己写文件产生的监听事件 —— 否则 `auto-sync` 会自己改自己，无脑提交刷屏
 
 ---
 ## 6. 踩过的坑（照抄能省 2 小时）
