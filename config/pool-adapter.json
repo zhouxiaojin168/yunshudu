@@ -1,0 +1,37 @@
+{
+  "_readme": "上游适配器：把「账号池」接到真实/模拟的上游平台。3 个接口：wallet(查余额) / checkin(每日签到领额度) / task(下单)。map 里写 JSON 取值路径（如 data.balance）。",
+  "name": "mock-official",
+  "base": "http://127.0.0.1:9941",
+  "auth": {
+    "type": "body",
+    "field": "token"
+  },
+  "endpoints": {
+    "wallet": {
+      "method": "POST",
+      "path": "/official/v2/wallet",
+      "map": {
+        "credits": "balance"
+      }
+    },
+    "checkin": {
+      "method": "POST",
+      "path": "/official/v2/checkin",
+      "map": {
+        "credits_before": "before",
+        "credits_after": "after",
+        "delta": "delta"
+      }
+    },
+    "task": {
+      "method": "POST",
+      "path": "/official/v2/task",
+      "map": {
+        "task_id": "task_id",
+        "result_url": "video_url",
+        "wallet_before": "wallet.before",
+        "wallet_after": "wallet.after"
+      }
+    }
+  }
+}

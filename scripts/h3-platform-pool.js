@@ -100,20 +100,70 @@ function audit(account_id, api_key, action, before, after, detail) {
 const listAccounts = () => db.prepare('SELECT * FROM accounts ORDER BY id').all();
 const getAccount = (id) => db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
 
-/* ------------------------- 上游调用 ------------------------- */
-async function upstream(pathname, payload) {
-  const r = await fetch(UPSTREAM + pathname, {
-    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload || {})
-  });
-  let j = null; try { j = await r.json(); } catch (e) { j = null; }
-  return { status: r.status, json: j || {}, retry_after: Number(r.headers.get('retry-after') || (j && j.retry_after) || 0) };
+/* ------------------------- 上游适配器（config/pool-adapter.json） ------------------------- */
+/* 3 个接口：wallet / checkin / task；method+path+auth+字段映射全部可配置，换上游只改 JSON */
+const ADAPTER_FILE = process.env.H3P_ADAPTER_FILE || path.join(ROOT, 'config', 'pool-adapter.json');
+let ADAPTER = null;
+try { ADAPTER = JSON.parse(fs.readFileSync(ADAPTER_FILE, 'utf8')); log('adapter: ' + ADAPTER.name + ' base=' + ADAPTER.base + ' <- ' + ADAPTER_FILE); }
+catch (e) { log('adapter: 读不到 ' + ADAPTER_FILE + '，退回内置 mock 形态（' + e.message + '）'); }
+const EP = (ADAPTER && ADAPTER.endpoints) || {};
+const ADAPTER_BASE = String((ADAPTER && ADAPTER.base) || UPSTREAM).replace(/\/+$/, '');
+const ADAPTER_AUTH = (ADAPTER && ADAPTER.auth) || { type: 'body', field: 'token' };
+
+function dig(obj, p) {
+  if (!p) return undefined;
+  return String(p).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
 }
+
+async function upstream(name, fallbackPath, payload) {
+  const e = EP[name] || {};
+  const pathname = e.path || fallbackPath;
+  const method = String(e.method || 'POST').toUpperCase();
+  const auth = e.auth || ADAPTER_AUTH;
+  const headers = { 'content-type': 'application/json' };
+  const body = Object.assign({}, payload || {});
+  const token = body.token;
+  delete body.token;
+  if (token != null && token !== '') {
+    if (auth.type === 'bearer') headers['authorization'] = 'Bearer ' + token;
+    else if (auth.type === 'header') headers[String(auth.header || 'x-token').toLowerCase()] = String(token);
+    else body[auth.field || 'token'] = token;
+  }
+  const init = { method: method, headers: headers };
+  if (method !== 'GET' && method !== 'HEAD') init.body = JSON.stringify(body);
+  const r = await fetch(ADAPTER_BASE + pathname, init);
+  let j = null;
+  try { j = await r.json(); } catch (err) { j = null; }
+  const flat = j || {};
+  const map = e.map || {};
+  const pick = function (k, dflt) {
+    const v = dig(flat, map[k]);
+    return (v === undefined || v === null) ? dig(flat, dflt) : v;
+  };
+  return {
+    status: r.status,
+    json: flat,
+    retry_after: Number(r.headers.get('retry-after') || flat.retry_after || 0),
+    g: {
+      credits: pick('credits', 'balance'),
+      credits_before: pick('credits_before', 'before'),
+      credits_after: pick('credits_after', 'after'),
+      delta: pick('delta', 'delta'),
+      task_id: pick('task_id', 'task_id'),
+      result_url: pick('result_url', 'video_url'),
+      wallet_before: pick('wallet_before', 'wallet.before'),
+      wallet_after: pick('wallet_after', 'wallet.after')
+    }
+  };
+}
+
 async function syncWallet(acct) {
   try {
-    const w = await upstream('/official/v2/wallet', { token: acct.token });
-    if (w.status === 200 && w.json && typeof w.json.balance === 'number') {
-      db.prepare('UPDATE accounts SET credits=? WHERE id=?').run(w.json.balance, acct.id);
-      return w.json.balance;
+    const w = await upstream('wallet', '/official/v2/wallet', { token: acct.token });
+    const bal = Number(w.g.credits);
+    if (w.status === 200 && isFinite(bal)) {
+      db.prepare('UPDATE accounts SET credits=? WHERE id=?').run(bal, acct.id);
+      return bal;
     }
   } catch (e) {}
   return null;
@@ -170,20 +220,21 @@ async function runPoolTask(opts) {
     hold(acct, need);
     let up;
     try {
-      up = await upstream('/official/v2/task', { token: acct.token, model: opts.model, spec: opts.spec, cost: opts.cost });
+      up = await upstream('task', '/official/v2/task', { token: acct.token, model: opts.model, spec: opts.spec, cost: opts.cost });
     } catch (e) {
       release(acct, need);
       return { ok: false, status: 502, code: 'upstream_error', message: String(e && e.message || e) };
     }
     if (up.status === 200) {
-      const w = up.json.wallet || {};
-      if (typeof w.after === 'number') db.prepare('UPDATE accounts SET credits=? WHERE id=?').run(w.after, acct.id);
+      const wb = Number(up.g.wallet_before);
+      const wa = Number(up.g.wallet_after);
+      if (isFinite(wa)) db.prepare('UPDATE accounts SET credits=? WHERE id=?').run(wa, acct.id);
       release(acct, need);
       db.prepare('UPDATE accounts SET success_count=success_count+1 WHERE id=?').run(acct.id);
-      audit(acct.id, opts.apiKey, 'task_settled', w.before, w.after, 'model=' + opts.model + ' cost=' + opts.cost + ' attempts=' + attempt);
+      audit(acct.id, opts.apiKey, 'task_settled', (isFinite(wb) ? wb : undefined), (isFinite(wa) ? wa : undefined), 'model=' + opts.model + ' cost=' + opts.cost + ' attempts=' + attempt + ' adapter=' + ((ADAPTER && ADAPTER.name) || 'builtin'));
       return { ok: true, status: 200, account_id: acct.id, account_label: acct.label, attempts: attempt,
-        wallet: { before: w.before, after: w.after, delta: w.delta },
-        upstream_task_id: up.json.task_id, result_url: up.json.video_url || up.json.url };
+        wallet: { before: (isFinite(wb) ? wb : null), after: (isFinite(wa) ? wa : null), delta: Number(up.g.delta) || null },
+        upstream_task_id: up.g.task_id, result_url: up.g.result_url }; 
     }
     const msg = String(up.json.message || up.json.error || '');
     if (up.status === 402 || /plan balance has run out/.test(msg)) {
@@ -214,12 +265,20 @@ async function checkinTick(force) {
     if (!a.healthy) continue;
     if (!force && now() - Number(a.last_checkin_at || 0) < CHECKIN_MS) continue;
     try {
-      const r = await upstream('/official/v2/checkin', { token: a.token });
+      const r = await upstream('checkin', '/official/v2/checkin', { token: a.token });
       if (r.status === 200) {
-        db.prepare('UPDATE accounts SET credits=?, last_checkin_at=?, checkin_count=checkin_count+1 WHERE id=?')
-          .run(Number(r.json.after || 0), now(), a.id);
-        audit(a.id, null, 'daily_checkin', Number(r.json.before || 0), Number(r.json.after || 0), 'delta=' + (r.json.delta || 0));
-        log('签到补分：账号 #' + a.id + ' ' + a.label + ' ' + r.json.before + ' -> ' + r.json.after);
+        const after = Number(r.g.credits_after);
+        const before = Number(r.g.credits_before);
+        if (isFinite(after)) {
+          db.prepare('UPDATE accounts SET credits=?, last_checkin_at=?, checkin_count=checkin_count+1, fail_reason=NULL WHERE id=?')
+            .run(after, now(), a.id);
+          audit(a.id, null, 'daily_checkin', (isFinite(before) ? before : undefined), after, 'delta=' + (r.g.delta || 0));
+          log('签到补分：账号 #' + a.id + ' ' + a.label + ' ' + (isFinite(before) ? before : '?') + ' -> ' + after);
+        }
+      } else if (r.status === 401 || r.status === 403) {
+        disableAccount(a, 'CHECKIN_AUTH_FAILED');
+      } else {
+        log('签到返回 http ' + r.status + ' 账号#' + a.id + ' :: ' + JSON.stringify(r.json).slice(0, 120));
       }
     } catch (e) { log('签到失败 账号#' + a.id + ': ' + e.message); }
   }
