@@ -53,7 +53,8 @@ function Ensure-Task($svc) {
   }
   $launcher = Join-Path $Root ([string]$svc.launcher)
   if (-not (Test-Path $launcher)) { Write-Output ('    launcher missing: ' + $launcher); return $false }
-  $argStr = '-NoProfile -ExecutionPolicy Bypass -File "' + $launcher + '"'
+  $q = [char]34
+  $argStr = '-NoProfile -ExecutionPolicy Bypass -File ' + $q + $launcher + $q
   if ($svc.launcherArgs) { $argStr += ' ' + (@($svc.launcherArgs) -join ' ') }
   try {
     $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $argStr
