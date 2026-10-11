@@ -133,7 +133,13 @@ async function upstream(name, fallbackPath, payload) {
   }
   const init = { method: method, headers: headers };
   if (method !== 'GET' && method !== 'HEAD') init.body = JSON.stringify(body);
-  const r = await fetch(ADAPTER_BASE + pathname, init);
+  let r;
+  try { r = await fetch(ADAPTER_BASE + pathname, init); }
+  catch (err) {
+    /* 上游不可达/地址没配好：返回 status 0，让调用方按 upstream_error 处理，绝不让进程崩 */
+    return { status: 0, json: { error: 'upstream_unreachable', message: String(err && err.message || err) }, retry_after: 0,
+      g: { credits: undefined, credits_before: undefined, credits_after: undefined, delta: undefined, task_id: undefined, result_url: undefined, wallet_before: undefined, wallet_after: undefined } };
+  }
   let j = null;
   try { j = await r.json(); } catch (err) { j = null; }
   const flat = j || {};
@@ -289,6 +295,11 @@ async function runPoolTask(opts) {
       return { ok: false, status: 400, code: 'upstream_rejected', message: msg || 'upstream rejected', detail: '换号也没用，直接回客户' };
     }
     release(acct, need);
+    if (up.status === 0) {
+      return { ok: false, status: 502, code: 'upstream_unreachable',
+        message: '上游不可达（检查 config/pool-adapter.json 的 base 或 H3P_UPSTREAM）：' + String(up.json.message || ''),
+        detail: { base: ADAPTER_BASE, source: ADAPTER_BASE_SRC } };
+    }
     return { ok: false, status: 502, code: 'upstream_error', message: msg || ('upstream http ' + up.status) };
   }
   return { ok: false, status: 503, code: 'upstream_balance',
@@ -352,6 +363,10 @@ function autoRevoke() {
 }
 
 const server = http.createServer(async (req, res) => {
+  try { return await handle(req, res); } catch (e) { log('handler 异常: ' + (e && e.message || e)); try { send(res, 500, { code: 'internal_error', message: String(e && e.message || e) }); } catch (e2) {} }
+});
+
+async function handle(req, res) {
   const url = req.url.split('?')[0];
   const body = await readBody(req);
   const isAdmin = String(req.headers['x-admin-key'] || body.admin_key || '') === ADMIN_KEY;
@@ -531,7 +546,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   return send(res, 404, { code: 'not_found', path: url });
-});
+}
 
 let checkinBusy = false;
 setInterval(async () => { if (checkinBusy) return; checkinBusy = true; try { await checkinTick(); } finally { checkinBusy = false; } }, Math.min(CHECKIN_MS, 5000));
