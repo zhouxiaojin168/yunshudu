@@ -1,9 +1,6 @@
-# ---- 运行期产物：不入库 ----
-runtime/bin/
-runtime/data/
-runtime/logs/
-runtime/credentials.txt
-runtime/test-token.txt
+# ---- 运行期产物：不入库（runtime 下只放行 checksums）----
+runtime/*
+!runtime/checksums-windows.txt
 
 # ---- 二进制/大文件 ----
 *.exe
