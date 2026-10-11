@@ -42,14 +42,19 @@ Log ("config = " + $ConfigFile)
 
 # ---------- login ----------
 $loginBody = @{ username = $AdminUser; password = $AdminPassword } | ConvertTo-Json -Compress
-$lg = Invoke-RestMethod -Uri ($Base + "/api/user/login") -Method Post -ContentType "application/json" -Body $loginBody -TimeoutSec 25
+$lg = Invoke-RestMethod -Uri ($Base + "/api/user/login") -Method Post -ContentType "application/json; charset=utf-8" -Body ([System.Text.Encoding]::UTF8.GetBytes($loginBody)) -TimeoutSec 25
 if (-not $lg.success) { throw ("login failed: " + ($lg | ConvertTo-Json -Compress)) }
 $H = @{ Authorization = ("Bearer " + $lg.data.access_token); "New-Api-User" = [string]$lg.data.user.id }
 Log ("login ok, admin id = " + $lg.data.user.id)
 
 function ApiJson([string]$method, [string]$path, $obj) {
   $p = @{ Uri = ($Base + $path); Method = $method; Headers = $H; TimeoutSec = 40 }
-  if ($null -ne $obj) { $p.ContentType = "application/json"; $p.Body = ($obj | ConvertTo-Json -Depth 10 -Compress) }
+  if ($null -ne $obj) {
+    # PS 5.1 的 Invoke-RestMethod 默认按 latin1 编码 body，中文会被写成 "??"，必须显式给 UTF-8 字节
+    $json = ($obj | ConvertTo-Json -Depth 10 -Compress)
+    $p.ContentType = "application/json; charset=utf-8"
+    $p.Body = [System.Text.Encoding]::UTF8.GetBytes($json)
+  }
   try { return Invoke-RestMethod @p }
   catch {
     $code = 0; try { $code = [int]$_.Exception.Response.StatusCode } catch {}
@@ -63,7 +68,11 @@ function ApiJson([string]$method, [string]$path, $obj) {
 $script:fail = 0
 function PutOpt([string]$key, [string]$val) {
   $r = ApiJson "PUT" "/api/option/" @{ key = $key; value = $val }
-  if ($r -and $r.success) { Log ("set " + $key + " = " + $val) } else { $script:fail++; Log ("SET FAILED -> " + $key) }
+  if ($r -and $r.success) { Log ("set " + $key + " = " + $val); return }
+  $msg = ""; if ($r) { $msg = [string]$r.message }
+  Log ("SET FAILED -> " + $key + " :: " + $msg + " (retrying once)")
+  $r2 = ApiJson "PUT" "/api/option/" @{ key = $key; value = $val }
+  if ($r2 -and $r2.success) { Log ("retry ok: " + $key) } else { $script:fail++; Log ("SET STILL FAILED -> " + $key) }
 }
 function J($o) { return ($o | ConvertTo-Json -Depth 10 -Compress) }
 
