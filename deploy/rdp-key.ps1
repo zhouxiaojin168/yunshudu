@@ -23,6 +23,7 @@ Add-Type -Namespace K -Name In -MemberDefinition @'
 [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool f);
 [DllImport("user32.dll")] public static extern void SwitchToThisWindow(IntPtr h, bool alt);
 [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassNameW(IntPtr h, System.Text.StringBuilder s, int n);
 '@
 function Title([IntPtr]$h) { $sb = New-Object System.Text.StringBuilder 512; [void][K.In]::GetWindowTextW($h, $sb, 512); return $sb.ToString() }
 $EXT = 0x0001; $UP = 0x0002
@@ -56,7 +57,15 @@ while ($tries -lt 8 -and -not $got) {
   [void][K.In]::AttachThreadInput($ct, $ft, $false)
   [void][K.In]::SetWindowPos($h, $HWND_NOTOPMOST, 0, 0, 0, 0, $SWP)
   Start-Sleep -Milliseconds 300
-  if ([K.In]::GetForegroundWindow() -eq $h) { $got = $true }
+  $fgNow = [K.In]::GetForegroundWindow()
+  if ($fgNow -eq $h) { $got = $true; break }
+  if ($tries -ge 3 -and $fgNow -ne [IntPtr]::Zero) {
+    $cls = New-Object System.Text.StringBuilder 256
+    [void][K.In]::GetClassNameW($fgNow, $cls, 256)
+    Write-Host ("  blocker: hwnd=" + $fgNow + " class=" + $cls.ToString() + " title=" + (Title $fgNow))
+    [void][K.In]::ShowWindow($fgNow, 6)
+    Start-Sleep -Milliseconds 250
+  }
 }
 Write-Host ('  focus tries=' + $tries + '  got=' + $got + '  fgNow=' + (Title ([K.In]::GetForegroundWindow())))
 if (-not $got) { Write-Host '  !! 没抢到焦点，终止（避免误伤本机）'; exit 2 }
