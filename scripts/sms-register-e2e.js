@@ -105,6 +105,8 @@ function post(url, obj, headers) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let child = null;
+const WATCHDOG = setTimeout(function () { console.log("  WATCHDOG timeout"); cleanup(); process.exit(3); }, 25000);
+
 async function main() {
   await listen(smsSrv, SMS_PORT);
   await listen(upSrv, UP_PORT);
@@ -167,4 +169,4 @@ function cleanup() {
   try { fs.rmSync(TMP, { recursive: true, force: true }); } catch (e) {}
 }
 
-main().then(() => { cleanup(); process.exit(fail ? 1 : 0); }).catch((e) => { console.log('  ERROR ' + e.message); cleanup(); process.exit(1); });
+main().then(() => { clearTimeout(WATCHDOG); cleanup(); process.exit(fail ? 1 : 0); }).catch((e) => { clearTimeout(WATCHDOG); console.log('  ERROR ' + String(e && e.stack || e)); cleanup(); process.exit(1); });
