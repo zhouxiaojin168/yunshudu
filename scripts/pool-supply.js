@@ -362,7 +362,7 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && u === '/supply/register') {
       const _probe = await readBody(req);
       if (!isAdmin(req, _probe)) return send(res, 401, { code: 'admin_required', message: 'need x-admin-key' });
-      const body = await readBody(req);
+      const body = _probe;   // 不能二次 readBody：请求流已结束，第二次会永久挂起（2026-10-12 修）
       const times = Math.max(1, Number(body.n || 1));
       const done = [];
       for (let i = 0; i < times; i++) {
