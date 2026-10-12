@@ -266,7 +266,10 @@
         "MF_HTTP_PORT": "8099",
         "MF_SMTP_ENABLE": "0",
         "MF_MAILBOX_TTL_S": "3600",
-        "MF_CODE_MAX_AGE_S": "900"
+        "MF_CODE_MAX_AGE_S": "900",
+        "MF_STORE": "file",
+        "MF_STATE_DIR": "C:\\yunshudu\\state\\mailfarm",
+        "MF_SNAPSHOT_EVERY": "500"
       },
       "envFrom": {
         "MF_API_KEY": "MAILFARM_API_KEY",
@@ -280,7 +283,7 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。",
+      "note": "一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。**MF_STORE=file：状态落在 C:\\yunshudu\\state\\mailfarm\\mailfarm.jsonl（追加日志+快照压缩），部署重启/崩溃不再丢已发邮箱与已收验证码。**",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },

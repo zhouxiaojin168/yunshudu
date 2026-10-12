@@ -15,6 +15,8 @@
  */
 const http = require('http');
 const net = require('net');
+const fs = require('fs');
+const path = require('path');
 
 const NL = String.fromCharCode(10);
 const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
@@ -51,6 +53,10 @@ const CFG = {
   codeMaxAgeS: envInt('MF_CODE_MAX_AGE_S', 900),
   maxMsgs: envInt('MF_MAX_MSGS_PER_BOX', 50),
   maxBoxes: envInt('MF_MAX_BOXES', 5000),
+  store: envStr('MF_STORE', 'memory').toLowerCase(),
+  stateDir: envStr('MF_STATE_DIR', 'state'),
+  stateFile: envStr('MF_STATE_FILE', ''),
+  snapshotEvery: envInt('MF_SNAPSHOT_EVERY', 500),
 };
 
 /* ----------------------------- 验证码提取 ----------------------------- */
@@ -106,6 +112,95 @@ const store = {
   acquiredTotal: 0,
   receivedTotal: 0,
   rr: 0,
+  storeKind: 'memory',
+  statePath: '',
+  lines: 0,
+  loaded: 0,
+
+  initStore: function () {
+    if (CFG.store !== 'file') { this.storeKind = 'memory'; return; }
+    this.storeKind = 'file';
+    let p = CFG.stateFile;
+    if (!p) {
+      const base = path.isAbsolute(CFG.stateDir) ? CFG.stateDir : path.join(__dirname, '..', CFG.stateDir);
+      p = path.join(base, 'mailfarm.jsonl');
+    }
+    this.statePath = p;
+    try { fs.mkdirSync(path.dirname(p), { recursive: true }); } catch (e) {}
+    const self = this;
+    try {
+      if (fs.existsSync(p)) {
+        const txt = fs.readFileSync(p, 'utf8');
+        const now = Date.now();
+        const arr = txt.split(String.fromCharCode(10));
+        arr.forEach(function (line) {
+          if (!line.trim()) return;
+          let e = null;
+          try { e = JSON.parse(line); } catch (err) { return; }
+          self.replay(e, now);
+        });
+        self.lines = arr.filter(function (x) { return x.trim(); }).length;
+      }
+    } catch (e) { log('WARN state load fail: ' + e.message); }
+    log('store=file path=' + this.statePath + ' loaded_events=' + this.loaded + ' boxes=' + this.boxes.size);
+  },
+
+  replay: function (e, now) {
+    if (!e || !e.t) return;
+    const a = String(e.a || '').toLowerCase();
+    if (!a) return;
+    if (e.t === 'box') {
+      if (e.e && e.e < now) return;
+      if (!this.boxes.has(a)) {
+        this.boxes.set(a, { address: a, domain: e.d || '', created_at: e.c || now, expires_at: e.e || (now + CFG.mailboxTtlS * 1000), messages: [] });
+      }
+      this.loaded++;
+      return;
+    }
+    if (e.t === 'msg') {
+      let box = this.boxes.get(a);
+      if (!box) {
+        const dom = a.indexOf('@') >= 0 ? a.split('@').pop() : 'unknown';
+        if (CFG.domains.indexOf(dom) < 0) return;
+        box = { address: a, domain: dom, created_at: now, expires_at: now + CFG.mailboxTtlS * 1000, messages: [] };
+        this.boxes.set(a, box);
+      }
+      if (e.m) {
+        box.messages.push(e.m);
+        if (box.messages.length > CFG.maxMsgs) box.messages = box.messages.slice(-CFG.maxMsgs);
+        this.receivedTotal++;
+        this.loaded++;
+      }
+      return;
+    }
+  },
+
+  persist: function (evt) {
+    if (this.storeKind !== 'file' || !this.statePath) return;
+    try {
+      fs.appendFileSync(this.statePath, JSON.stringify(evt) + String.fromCharCode(10), 'utf8');
+      this.lines++;
+      if (this.lines >= CFG.snapshotEvery) this.compact();
+    } catch (e) { log('WARN persist fail: ' + e.message); }
+  },
+
+  compact: function () {
+    if (this.storeKind !== 'file' || !this.statePath) return;
+    const now = Date.now();
+    const lines = [];
+    this.boxes.forEach(function (b) {
+      if (b.expires_at < now) return;
+      lines.push(JSON.stringify({ t: 'box', a: b.address, d: b.domain, c: b.created_at, e: b.expires_at }));
+      b.messages.forEach(function (m) { lines.push(JSON.stringify({ t: 'msg', a: b.address, m: m })); });
+    });
+    const tmp = this.statePath + '.tmp';
+    try {
+      fs.writeFileSync(tmp, lines.length ? lines.join(String.fromCharCode(10)) + String.fromCharCode(10) : '', 'utf8');
+      fs.renameSync(tmp, this.statePath);
+      this.lines = lines.length;
+      log('state compacted boxes=' + this.boxes.size + ' lines=' + lines.length);
+    } catch (e) { log('WARN compact fail: ' + e.message); }
+  },
 
   pickDomain: function (want) {
     if (want && CFG.domains.indexOf(want) >= 0) return want;
@@ -151,8 +246,10 @@ const store = {
       if (!this.boxes.has(addr)) break;
     }
     const now = Date.now();
-    this.boxes.set(addr, { address: addr, domain: dom, created_at: now, expires_at: now + CFG.mailboxTtlS * 1000, messages: [] });
+    const boxRec = { address: addr, domain: dom, created_at: now, expires_at: now + CFG.mailboxTtlS * 1000, messages: [] };
+    this.boxes.set(addr, boxRec);
     this.acquiredTotal++;
+    this.persist({ t: 'box', a: addr, d: dom, c: now, e: now + CFG.mailboxTtlS * 1000 });
     return { address: addr, domain: dom, expires_at: Math.round((now + CFG.mailboxTtlS * 1000) / 1000) };
   },
 
@@ -175,9 +272,11 @@ const store = {
       this.boxes.set(addr, box);
     }
     const codes = extractCodes(subject, text, 5);
-    box.messages.push({ ts: Math.round(now / 1000), sender: sender || '', rcpt: addr, subject: subject || '', text: text || '', codes: codes });
+    const msg = { ts: Math.round(now / 1000), sender: sender || '', rcpt: addr, subject: subject || '', text: text || '', codes: codes };
+    box.messages.push(msg);
     if (box.messages.length > CFG.maxMsgs) box.messages = box.messages.slice(-CFG.maxMsgs);
     this.receivedTotal++;
+    this.persist({ t: 'msg', a: addr, m: msg });
     return true;
   },
 
@@ -213,7 +312,8 @@ const store = {
       if (b.messages.some(function (m) { return m.codes && m.codes.length; })) withCodes++;
     });
     return {
-      service: CFG.service, version: CFG.version, store: 'memory', domains: CFG.domains,
+      service: CFG.service, version: CFG.version, store: this.storeKind, domains: CFG.domains,
+      state_path: this.statePath || null, persist_loaded: this.loaded,
       mailboxes: this.boxes.size, mailboxes_with_codes: withCodes, messages: msgs,
       acquired_total: this.acquiredTotal, received_total: this.receivedTotal,
       smtp_enabled: CFG.smtpEnabled, uptime_s: Math.round((Date.now() - this.startedAt) / 100) / 10
@@ -221,7 +321,7 @@ const store = {
   },
 
   healthz: function () {
-    return { ok: true, version: CFG.version, store: 'memory', domains: CFG.domains, uptime_s: Math.round((Date.now() - this.startedAt) / 100) / 10 };
+    return { ok: true, version: CFG.version, store: this.storeKind, domains: CFG.domains, uptime_s: Math.round((Date.now() - this.startedAt) / 100) / 10 };
   }
 };
 
@@ -512,6 +612,7 @@ const httpServer = http.createServer(function (req, res) {
 
 /* ------------------------------- main ------------------------------- */
 function main() {
+  store.initStore();
   httpServer.listen(CFG.httpPort, CFG.httpHost, function () {
     log(CFG.service + ' ' + CFG.version + ' (node) starting');
     log('HTTP listening on http://' + CFG.httpHost + ':' + CFG.httpPort);
