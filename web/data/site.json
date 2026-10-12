@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T21:23:33.344Z",
+  "generatedAt": "2026-10-12T22:53:32.393Z",
   "source": "http://127.0.0.1:3000",
   "site": {
     "name": "幻镜AI",
@@ -23,6 +23,11 @@
       "id": -1009,
       "name": "MiniMax",
       "icon": "Minimax.Color"
+    },
+    {
+      "id": -1012,
+      "name": "OpenAI",
+      "icon": "OpenAI"
     }
   ],
   "usable_group": {
@@ -30,6 +35,19 @@
     "vip": "vip分组"
   },
   "models": [
+    {
+      "model_name": "all-in-one-image-pro",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
     {
       "model_name": "audios_understand",
       "quota_type": 1,
@@ -45,6 +63,33 @@
     },
     {
       "model_name": "describe_images",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "gpt-image-1.5",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "image-generation",
+        "openai"
+      ]
+    },
+    {
+      "model_name": "image-01",
       "quota_type": 1,
       "model_price": 0.047945205479,
       "model_ratio": 0,
@@ -161,6 +206,19 @@
       ]
     },
     {
+      "model_name": "nano-banana2",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
       "model_name": "reverse_image_search",
       "quota_type": 1,
       "model_price": 0.047945205479,
@@ -175,6 +233,19 @@
     },
     {
       "model_name": "search_images",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "seedream-4.5",
       "quota_type": 1,
       "model_price": 0.047945205479,
       "model_ratio": 0,
@@ -213,11 +284,16 @@
         "MiniMax-M3",
         "MiniMax-Music",
         "MiniMax-Speech",
+        "all-in-one-image-pro",
         "audios_understand",
         "describe_images",
+        "gpt-image-1.5",
+        "image-01",
         "listen_audio",
+        "nano-banana2",
         "reverse_image_search",
         "search_images",
+        "seedream-4.5",
         "videos_understand"
       ],
       "status": 1,
