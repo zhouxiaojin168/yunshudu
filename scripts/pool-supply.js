@@ -307,6 +307,15 @@ async function runRegisterFlow() {
     if (want >= 0 && r.status !== want) {
       throw new Error('步骤 ' + (step.name || type) + ' 返回 ' + r.status + ' :: ' + txt.slice(0, 200));
     }
+    /* 业务码校验：海螺 HTTP 200 也可能带 statusInfo.code!=0（22=封号 / 32=限流 / 2400026=贝壳不足）。
+       不校验就会把「短信没真发成功」当成功、白等验证码白烧一个号。step.expect_code 显式要求时生效。 */
+    if (step.expect_code !== undefined) {
+      const gotCode = Number(dig(j || {}, step.expect_code_path || 'statusInfo.code'));
+      const wantCode = Number(step.expect_code);
+      if (gotCode !== wantCode) {
+        throw new Error('步骤 ' + (step.name || type) + ' 业务码 ' + (isFinite(gotCode) ? gotCode : 'n/a') + ' != ' + wantCode + ' :: ' + txt.slice(0, 200));
+      }
+    }
   }
   const acc = vars.account || {};
   if (!acc.token) throw new Error('工作流跑完但没拿到 token（检查最后一步的 save/emit）');

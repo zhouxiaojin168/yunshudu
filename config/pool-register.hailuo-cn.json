@@ -1,15 +1,15 @@
 {
   "_note": "补号源④：海螺国内站（hailuoai.com）手机号+短信 注册工作流。步骤带 sign='hailuo'，由 pool-supply 内置的 hailuo-sign.js 自动加 yy 签名与公共 query 参数。",
-  "_why_domestic": "实测：海外站 hailuoai.video 网页端登录只有 Google / Apple（/login 页仅两个按钮），没有手机号/邮箱入口；国内站 hailuoai.com 网页端是 手机号+短信验证码+密码。所以「用接码平台自动注册」只对国内站成立。",
-  "_need": "接码平台三件套（写进服务器 C:\\yunshudu\\secrets.txt 后重启 yunshudu-pool-supply）：SUPP_SMS_GET / SUPP_SMS_POLL / SUPP_SMS_KEY（可选 SUPP_SMS_HEADERS 走 JSON 请求头）。",
-  "_unverified": "sms/send 与 login/phone 两个接口已实测存在（返回 400 code=2 说明路由在、参数形状需按平台真实号对齐）；save 的 token 路径按常见返回预填，第一单真号跑通后如取不到 token，按真实响应改 save 即可。",
+  "_why_domestic": "实测（R113）：海外站 hailuoai.video 网页端登录只有 Google / Apple，没有手机号/邮箱入口；国内站 hailuoai.com 是 手机号+短信验证码。所以「用接码平台自动注册」只对国内站成立。",
+  "_verified": "★R113 生产实测：d1jiema 接码平台取号 -> POST /v1/api/user/login/sms/send {phone} (sign=hailuo) HTTP200 code=0 真发短信 -> 收到真实验证码 -> POST /v1/api/user/login/phone {phone,code} HTTP200 返回 data.token -> 入池；该号在 hailuoai.com GET /v1/api/billing/credit = 80 credit（新人礼 credit_type=3）。服务器 yunshudu-pool-supply 已全自动跑通（日志：取号 17001260132 -> 收到验证码 564241 -> 入池 #8）。",
+  "_need": "接码平台三件套（写进服务器 C:\\yunshudu\\secrets.txt 后重启 yunshudu-pool-supply）：SUPP_SMS_GET / SUPP_SMS_POLL / SUPP_SMS_KEY（可选 SUPP_SMS_HEADERS 走 JSON 请求头）。d1jiema 形态：SUPP_SMS_GET=https://api.d1jiema.com/zc/data.php?code=getPhone&token=<TOKEN>&keyWord=%E6%B5%B7%E8%9E%BA&cardType=%E5%85%A8%E9%83%A8 ; SUPP_SMS_POLL=https://api.d1jiema.com/zc/data.php?code=getMsg&token=<TOKEN>&phone={id}&keyWord=%E6%B5%B7%E8%9E%BA",
   "base": "https://hailuoai.com",
-  "project": "REPLACE_WITH_SMS_PROJECT_ID",
+  "project": "海螺",
   "steps": [
     {
       "name": "取号",
       "type": "sms-get",
-      "project": "REPLACE_WITH_SMS_PROJECT_ID",
+      "project": "海螺",
       "save_phone": "phone",
       "save_id": "phone_id"
     },
@@ -22,7 +22,8 @@
       "body": {
         "phone": "{{phone}}"
       },
-      "expect": 200
+      "expect": 200,
+      "expect_code": 0
     },
     {
       "name": "等短信",
@@ -49,7 +50,8 @@
         "token": "data.token",
         "label": "data.userID"
       },
-      "expect": 200
+      "expect": 200,
+      "expect_code": 0
     },
     {
       "name": "整理账号",

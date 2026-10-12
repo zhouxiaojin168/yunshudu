@@ -181,7 +181,7 @@
         "H3P_DB": "C:\\yunshudu\\data\\h3pool.db",
         "H3P_CHECKIN_MS": "60000",
         "H3P_DAILY_CREDITS": "300",
-        "H3P_ADAPTER_FILE": "C:\\yunshudu\\app\\config\\pool-adapter.hailuo-web-intl.json",
+        "H3P_ADAPTER_FILE": "C:\\yunshudu\\app\\config\\pool-adapter.hailuo-web.json",
         "H3P_POLL_MS": "5000"
       },
       "envFrom": {
@@ -195,7 +195,7 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "账号池引擎（服务端账号池）：N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。上游接口全在 config/pool-adapter.<x>.json 里（base/path/auth/map/body 模板/models 参数映射），换上游不动代码；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。当前指向乙路-海外站 hailuoai.video（R88 生产跑通：灌号->出图->轮询回填真图 URL）。",
+      "note": "账号池引擎（服务端账号池）：N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。上游接口全在 config/pool-adapter.<x>.json 里（base/path/auth/map/body 模板/models 参数映射），换上游不动代码；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。当前指向乙路-国内站 hailuoai.com（R113 起：接码平台手机号+短信可全自动注册，池子的号源即国内站；海外站 hailuoai.video 只能 Google/Apple 登录、无法自动补号，故仅保留适配器文件备用）。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
