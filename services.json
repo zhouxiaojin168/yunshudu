@@ -231,7 +231,10 @@
         "SUPP_LOG_FILE": "C:\\yunshudu\\logs\\pool-supply.log",
         "SUPP_MAIL_API": "http://127.0.0.1:8099",
         "SUPP_MAIL_PREFIX": "hl",
-        "SUPP_MAIL_WAIT_MS": "90000"
+        "SUPP_MAIL_WAIT_MS": "90000",
+        "SUPP_SMS_COST": "0.4",
+        "SUPP_SMS_MAX_TRY": "3",
+        "SUPP_SMS_LEDGER": "C:\\yunshudu\\app\\state\\sms-ledger.json"
       },
       "envFrom": {
         "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY",
