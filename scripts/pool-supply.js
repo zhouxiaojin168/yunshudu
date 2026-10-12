@@ -85,6 +85,11 @@ async function mailWaitCode(address) {
 const INTERVAL = Number(process.env.SUPP_INTERVAL_MS || 60000);
 const CHECKIN_EVERY = Number(process.env.SUPP_CHECKIN_EVERY || 10);
 const REFILL_BATCH = Number(process.env.SUPP_REFILL_BATCH || 3);
+/* R139 circuit breaker: the SMS pool returns many RECYCLED numbers (register ok but 0 credits).
+   Those get pruned immediately, healthy stays below POOL_MIN, so the guard would buy another number
+   every round -> a silent money-burning loop. Exponential backoff on consecutive fruitless registers. */
+const REG_BASE_MS = Number(process.env.SUPP_REGISTER_BASE_MS || 300000);  /* first backoff 5 min */
+const REG_MAX_MS = Number(process.env.SUPP_REGISTER_MAX_MS || 3600000);   /* cap 60 min */
 const LOGD = path.join(ROOT, 'logs');
 const LOGF = process.env.SUPP_LOG_FILE || path.join(LOGD, 'pool-supply.log');
 const STATE = process.env.SUPP_STATE_FILE || path.join(ROOT, 'state', 'pool-supply.json');
@@ -104,7 +109,8 @@ function log(s) {
 
 const state = {
   started_at: Date.now(), loops: 0, imported: 0, registered: 0, refills: 0,
-  checkins: 0, last_error: null, last_refill_at: 0, source_used: null
+  checkins: 0, last_error: null, last_refill_at: 0, source_used: null,
+  register_zeros: 0, register_backoff_ms: 0, last_register_at: 0
 };
 try {
   const prev = JSON.parse(fs.readFileSync(STATE, 'utf8'));
@@ -363,14 +369,29 @@ async function guardRound(force) {
           if (added > 0) { state.source_used = 'farm'; state.imported += added; report.actions.push('farm+' + added); }
         } catch (e) { log('农场补号失败: ' + e.message); }
         if (added < want) {
-          try {
-            const res = await runRegisterFlow();
-            const a = res.account;
-            const r = await poolAdd({ label: a.label || a.token.slice(0, 12), token: a.token, credits: Number(a.credits || 0) });
-            if (r.status === 200) { state.registered++; state.source_used = 'register'; report.actions.push('register+1'); }
-          } catch (e) {
-            state.last_error = 'register: ' + e.message;
-            log('注册补号失败: ' + e.message);
+          const _since = Date.now() - Number(state.last_register_at || 0);
+          const _gap = Number(state.register_backoff_ms || 0);
+          if (_since < _gap) {
+            report.actions.push('register_backoff_' + Math.round((_gap - _since) / 1000) + 's');
+          } else {
+            state.last_register_at = Date.now();
+            try {
+              const res = await runRegisterFlow();
+              const a = res.account;
+              const r = await poolAdd({ label: a.label || a.token.slice(0, 12), token: a.token, credits: Number(a.credits || 0) });
+              if (r.status === 200) { state.registered++; state.source_used = 'register'; report.actions.push('register+1'); }
+              if (Number(a.credits || 0) > 0) { state.register_zeros = 0; state.register_backoff_ms = 0; }
+              else {
+                state.register_zeros = Number(state.register_zeros || 0) + 1;
+                state.register_backoff_ms = Math.min(REG_MAX_MS, REG_BASE_MS * Math.pow(2, state.register_zeros - 1));
+                log('补到 0 额度号（连续第 ' + state.register_zeros + ' 次），退避 ' + Math.round(state.register_backoff_ms / 1000) + 's');
+              }
+            } catch (e) {
+              state.last_error = 'register: ' + e.message;
+              state.register_zeros = Number(state.register_zeros || 0) + 1;
+              state.register_backoff_ms = Math.min(REG_MAX_MS, REG_BASE_MS * Math.pow(2, state.register_zeros - 1));
+              log('注册补号失败（连续第 ' + state.register_zeros + ' 次，退避 ' + Math.round(state.register_backoff_ms / 1000) + 's）: ' + e.message);
+            }
           }
         }
         state.refills++;
@@ -416,7 +437,7 @@ const server = http.createServer(async (req, res) => {
       const h = healthyCount(st);
       return send(res, 200, {
         supply: state,
-        config: { pool: POOL, pool_min: POOL_MIN, pool_max: POOL_MAX, interval_ms: INTERVAL, farm_file: FARM_FILE, register_file: REG_FILE, sms_configured: !!SMS_GET },
+        config: { pool: POOL, pool_min: POOL_MIN, pool_max: POOL_MAX, interval_ms: INTERVAL, farm_file: FARM_FILE, register_file: REG_FILE, sms_configured: !!SMS_GET, register_zeros: Number(state.register_zeros || 0), register_backoff_ms: Number(state.register_backoff_ms || 0) },
         pool: { total: h.total, healthy: h.healthy, credits: Math.round(h.credits * 100) / 100 },
         accounts: h.accounts.map((a) => ({ id: a.id, label: a.label, credits: a.credits, held: a.held, healthy: a.healthy, fail_reason: a.fail_reason, checkin_count: a.checkin_count, success_count: a.success_count }))
       });
