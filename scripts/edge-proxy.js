@@ -14,6 +14,7 @@
  *     EDGE_PORT        监听端口，支持逗号分隔，默认 80,8080
  *     EDGE_HOST        监听地址，默认 0.0.0.0
  *     EDGE_UPSTREAM    上游地址，默认 http://127.0.0.1:3000
+ *     EDGE_ROUTES      额外前缀路由："/mailfarm=http://127.0.0.1:8099"（逗号分隔，命中前缀后剥掉前缀转发）
  *     EDGE_LOG_DIR     日志目录，默认 <repo>/runtime/logs
  *     EDGE_ACCESS_LOG  '1' 时把每条请求也写日志（默认只记错误）
  *
@@ -34,6 +35,16 @@ const PORTS = PORT_SPEC.split(',').map((s) => Number(String(s).trim())).filter((
 const HOST = process.env.EDGE_HOST || '0.0.0.0';
 const UPSTREAM = process.env.EDGE_UPSTREAM || 'http://127.0.0.1:3000';
 const US = new URL(UPSTREAM);
+/* 前缀路由：把 /mailfarm/* 之类转到别的本地服务（mailfarm 8099），这样隧道/反代一开就能被 Cloudflare Email Worker 访问 */
+const ROUTES = (process.env.EDGE_ROUTES || '').split(',').map(function (s) { return s.trim(); }).filter(Boolean).map(function (spec) {
+  const i = spec.indexOf('=');
+  if (i <= 0) return null;
+  const pre = spec.slice(0, i).replace(/\/+$/, '');
+  try {
+    const tgt = new URL(spec.slice(i + 1));
+    return { prefix: pre, mod: tgt.protocol === 'https:' ? https : http, host: tgt.hostname, port: Number(tgt.port || (tgt.protocol === 'https:' ? 443 : 80)) };
+  } catch (e) { return null; }
+}).filter(Boolean);
 const UP_MOD = US.protocol === 'https:' ? https : http;
 const UP_HOST = US.hostname;
 const UP_PORT = Number(US.port || (US.protocol === 'https:' ? 443 : 80));
@@ -136,10 +147,20 @@ function handle(req, res) {
 
 
   reqCount++;
+  let upMod = UP_MOD, upHost = UP_HOST, upPort = UP_PORT, upPath = req.url;
+  for (let i = 0; i < ROUTES.length; i++) {
+    const rt = ROUTES[i];
+    if (req.url === rt.prefix || req.url.indexOf(rt.prefix + '/') === 0 || req.url.indexOf(rt.prefix + '?') === 0) {
+      upMod = rt.mod; upHost = rt.host; upPort = rt.port;
+      const rest = req.url.slice(rt.prefix.length);
+      upPath = rest ? (rest.charAt(0) === '/' ? rest : '/' + rest) : '/';
+      break;
+    }
+  }
   const headers = Object.assign({}, req.headers);
   delete headers['connection'];
   delete headers['host'];
-  headers['host'] = UP_HOST + ':' + UP_PORT;
+  headers['host'] = upHost + ':' + upPort;
   const prior = req.headers['x-forwarded-for'];
   headers['x-forwarded-for'] = (prior ? String(prior) + ', ' : '') + clientIp(req);
   headers['x-forwarded-proto'] = 'http';
@@ -148,14 +169,14 @@ function handle(req, res) {
 
   const opt = {
     protocol: US.protocol,
-    hostname: UP_HOST,
-    port: UP_PORT,
+    hostname: upHost,
+    port: upPort,
     method: req.method,
-    path: req.url,
+    path: upPath,
     headers: headers
   };
 
-  const up = UP_MOD.request(opt, (ur) => {
+  const up = upMod.request(opt, (ur) => {
     const rh = Object.assign({}, ur.headers);
     Object.keys(rh).forEach((k) => { if (HOP.has(k.toLowerCase())) delete rh[k]; });
     res.writeHead(ur.statusCode || 502, rh);

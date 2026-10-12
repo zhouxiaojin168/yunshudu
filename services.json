@@ -44,7 +44,8 @@
         "EDGE_UPSTREAM": "http://127.0.0.1:3000",
         "EDGE_LOG_DIR": "C:\\yunshudu\\logs",
         "EDGE_RL_MAX": "1200",
-        "EDGE_ACCESS_LOG": "0"
+        "EDGE_ACCESS_LOG": "0",
+        "EDGE_ROUTES": "/mailfarm=http://127.0.0.1:8099"
       },
       "health": {
         "kind": "http",
@@ -58,7 +59,7 @@
         80,
         8080
       ],
-      "note": "机房公网 80 被透明截持（Apache 301 -> 183.136.132.24），故同时听 8080；80 留待备案/解封。EDGE_RL_MAX=每IP每分钟上限（0=不限流）；EDGE_ACCESS_LOG=1 记录每条请求（默认只记慢请求和错误）",
+      "note": "机房公网 80 被透明截持（Apache 301 -> 183.136.132.24），故同时听 8080；80 留待备案/解封。EDGE_RL_MAX=每IP每分钟上限（0=不限流）；EDGE_ACCESS_LOG=1 记录每条请求（默认只记慢请求和错误） 新增 EDGE_ROUTES：/mailfarm/* -> 127.0.0.1:8099（mailfarm），这样 Cloudflare Email Worker 可直接 POST 到 <隧道域名>/mailfarm/v1/ingest，无需开新端口。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
