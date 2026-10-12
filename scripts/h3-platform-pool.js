@@ -623,6 +623,15 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, id: r.id, token: r.token, label: r.label, credits: r.credits, probed: r.probed });
     }
     if (req.method === 'POST' && url === '/pool/accounts/revive') { return send(res, 200, Object.assign({ ok: true }, await reviveDead())); }
+    if (req.method === 'POST' && url === '/pool/accounts/prune') {
+      /* 清掉「0 额度」的死号：d1jiema 回收号没有新人礼、探出来就是 0，留着只会撑爆 total、占 POOL_MAX 名额。
+         默认只删「健康且 0 额度」的（body.all=true 连不健康的一起删）。 */
+      const before = Number(db.prepare('SELECT COUNT(*) c FROM accounts').get().c || 0);
+      db.prepare(body.all ? 'DELETE FROM accounts WHERE credits<=0' : 'DELETE FROM accounts WHERE credits<=0 AND healthy=1').run();
+      const after = Number(db.prepare('SELECT COUNT(*) c FROM accounts').get().c || 0);
+      log('prune: 删除 ' + (before - after) + ' 个 0 额度号，剩 ' + after);
+      return send(res, 200, { ok: true, removed: before - after, remaining: after, accounts: listAccounts() });
+    }
     if (req.method === 'POST' && url === '/pool/accounts/bulk') {
       const arr = Array.isArray(body.accounts) ? body.accounts : [];
       if (!arr.length) return send(res, 400, { ok: false, code: 'no_accounts' });

@@ -130,8 +130,11 @@ const poolRevive = () => poolReq('POST', '/pool/accounts/revive', {});
 function healthyCount(st) {
   const arr = (st && st.json && st.json.accounts) || [];
   const live = arr.filter((a) => Number(a.healthy) === 1);
-  const credits = live.reduce((s, a) => s + Number(a.credits || 0), 0);
-  return { total: arr.length, healthy: live.length, credits: credits, accounts: arr };
+  /* 「可用」= 健康 且 余额>0。d1jiema 卡池里有回收号（R113 实测命中率约 50% 拿不到新人礼 80 credit），
+     只按 healthy 计会让 0 额度号把池子「撑满」、补号提前停止 -> 对外看是「无限算力」其实没额度可用。 */
+  const usable = live.filter((a) => Number(a.credits || 0) > 0);
+  const credits = usable.reduce((s, a) => s + Number(a.credits || 0), 0);
+  return { total: arr.length, healthy: usable.length, healthy_live: live.length, credits: credits, accounts: arr };
 }
 
 /* ------------------------- 补号源①：农场文件 ------------------------- */
@@ -332,7 +335,7 @@ async function guardRound(force) {
   try {
     const st = await poolStats();
     const h = healthyCount(st);
-    report.pool = { total: h.total, healthy: h.healthy, credits: Math.round(h.credits * 100) / 100 };
+    report.pool = { total: h.total, healthy: h.healthy, healthy_live: h.healthy_live, credits: Math.round(h.credits * 100) / 100 };
     state.loops++;
 
     if (h.healthy < POOL_MIN || force) {
