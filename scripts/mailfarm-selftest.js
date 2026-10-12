@@ -149,6 +149,16 @@ function waitHealth(n) {
       const igBad = await req('POST', '/v1/ingest', { to: 'cfbox@ytu.baby', text: 'x' }, { 'x-ingest-key': 'wrong' });
       check('ingest 错 key -> 401', igBad.status === 401, igBad.status);
 
+      /* /v1/domains：与上游实测契约对齐 */
+      const d0 = await req('GET', '/v1/domains', undefined, { 'x-api-key': API_KEY });
+      check('domains 列表带 key -> 200 含 ytu.baby', d0.status === 200 && d0.json.domains.indexOf('ytu.baby') >= 0, d0.json);
+      const d1 = await req('GET', '/v1/domains');
+      check('domains 无 key -> 401', d1.status === 401, d1.status);
+      const d2 = await req('POST', '/v1/domains', { domains: ['newdom.test'] }, { 'x-api-key': API_KEY });
+      check('domains POST 追加成功', d2.status === 200 && d2.json.domains.indexOf('newdom.test') >= 0, d2.json);
+      const d3 = await req('POST', '/v1/ingest', { to: 'x@newdom.test', text: 'verification code: 112233' }, { 'x-ingest-key': 'ingest-key-123' });
+      check('新增域立即可收信', d3.status === 200 && d3.json.codes[0] === '112233', d3.json);
+
       const und = await req('POST', '/v1/ingest', { to: 'x@not-mine.com', text: 'x' }, { 'x-ingest-key': 'ingest-key-123' });
       check('ingest 非收信域 -> 400', und.status === 400, und.status);
     }

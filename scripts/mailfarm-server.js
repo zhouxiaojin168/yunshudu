@@ -115,6 +115,17 @@ const store = {
     return d;
   },
 
+  addDomains: function (list) {
+    const added = [];
+    (Array.isArray(list) ? list : []).forEach(function (d) {
+      const x = String(d || '').trim().toLowerCase().replace(/^\.+/, '');
+      if (!x || CFG.domains.indexOf(x) >= 0) return;
+      CFG.domains.push(x);
+      added.push(x);
+    });
+    return added;
+  },
+
   gc: function () {
     const now = Date.now();
     const self = this;
@@ -412,6 +423,20 @@ const httpServer = http.createServer(function (req, res) {
   if (method === 'GET' && path === '/v1/stats') {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
     return json(res, 200, store.stats());
+  }
+  /* /v1/domains：与上游实测契约对齐（GET 列出 / POST 追加，运行时生效，内存态） */
+  if (path === '/v1/domains') {
+    if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
+    if (method === 'GET') return json(res, 200, { ok: true, domains: CFG.domains });
+    if (method === 'POST') {
+      return readBody(req, function (b) {
+        if (b === null) return json(res, 400, { detail: 'bad json' });
+        const added = store.addDomains(b.domains);
+        if (added.length) log('domains added: ' + added.join(','));
+        json(res, 200, { ok: true, added: added, domains: CFG.domains });
+      });
+    }
+    return json(res, 405, { detail: 'Method Not Allowed' });
   }
 
   if (method === 'POST' && path === '/v1/mailboxes/acquire') {
