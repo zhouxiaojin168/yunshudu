@@ -43,19 +43,38 @@ function get(url, headers) {
 }
 function smtpSend(to, subject, body, from) {
   return new Promise(function (res) {
-    const s = net.connect(MF_SMTP, '127.0.0.1');
-    let step = 0;
-    s.setTimeout(8000);
-    s.on('data', function () {
-      if (step === 0) { step = 1; s.write('EHLO mock-upstream' + CRLF); }
-      else if (step === 1) { step = 2; s.write('MAIL FROM:<' + from + '>' + CRLF); }
-      else if (step === 2) { step = 3; s.write('RCPT TO:<' + to + '>' + CRLF); }
-      else if (step === 3) { step = 4; s.write('DATA' + CRLF); }
-      else if (step === 4) { step = 5; s.write('Subject: ' + subject + CRLF + 'From: ' + from + CRLF + CRLF + body + CRLF + '.' + CRLF); }
-      else if (step === 5) { s.write('QUIT' + CRLF); res(true); }
+    const CRLF = String.fromCharCode(13) + String.fromCharCode(10);
+    const s = net.connect(MF_SMTP, "127.0.0.1");
+    let buf = "", phase = "greet", done = false;
+    function finish(ok) {
+      if (done) return; done = true;
+      try { s.write("QUIT" + CRLF); } catch (e) {}
+      setTimeout(function () { try { s.destroy(); } catch (e) {} res(ok); }, 60);
+    }
+    function onLine(line) {
+      const code = line.slice(0, 3);
+      if (line.length > 3 && line.charAt(3) === "-") return;
+      if (/^[45]/.test(code)) { finish(false); return; }
+      if (code === "220") { s.write("EHLO test" + CRLF); return; }
+      if (code === "250" && phase === "greet") { phase = "mail"; s.write("MAIL FROM:<" + from + ">" + CRLF); return; }
+      if (code === "250" && phase === "mail") { phase = "rcpt"; s.write("RCPT TO:<" + to + ">" + CRLF); return; }
+      if (code === "250" && phase === "rcpt") { phase = "data"; s.write("DATA" + CRLF); return; }
+      if (code === "354") { phase = "sent"; s.write("Subject: " + subject + CRLF + "From: " + from + CRLF + CRLF + body + CRLF + "." + CRLF); return; }
+      if (code === "250" && phase === "sent") { finish(true); return; }
+    }
+    s.setTimeout(10000);
+    s.on("data", function (chunk) {
+      buf += String(chunk);
+      for (;;) {
+        const i = buf.indexOf(CRLF);
+        if (i < 0) break;
+        const line = buf.slice(0, i);
+        buf = buf.slice(i + 2);
+        onLine(line);
+      }
     });
-    s.on('error', function () { res(false); });
-    s.on('timeout', function () { try { s.destroy(); } catch (e) {} res(false); });
+    s.on("error", function () { finish(false); });
+    s.on("timeout", function () { finish(false); });
   });
 }
 
