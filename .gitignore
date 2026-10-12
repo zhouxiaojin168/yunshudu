@@ -22,3 +22,4 @@ config/*.local.json
 
 # ---- 临时调试脚本 ----
 scripts/_dbg-*.js
+scripts/_r*-*.js

@@ -18,6 +18,15 @@ const POOL_ADMIN = process.env.H3P_ADMIN_KEY || 'sk-hl-admin';
 const SUPP_ADMIN = process.env.SUPP_ADMIN_KEY || 'sk-supply-admin';
 const DOMAINS = process.env.MF_DOMAINS || 'allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby';
 
+const SECRETS_FILE = path.join(STATE, 'secrets.local.json');
+let SECRETS = {};
+try { SECRETS = JSON.parse(fs2.readFileSync(SECRETS_FILE, 'utf8')); } catch (e) {}
+const SMS = SECRETS.sms || {};
+const REG_MODE = process.env.SUPP_REGISTER_MODE || SECRETS.register || 'mailfarm';
+const REG_FILE = REG_MODE === 'hailuo-cn'
+  ? path.join(ROOT,'config','pool-register.hailuo-cn.json')
+  : path.join(ROOT,'config','pool-register.mailfarm.json');
+
 const PROCS = {
   mailfarm: {
     script: 'scripts\\mailfarm-server.js',
@@ -43,10 +52,11 @@ const PROCS = {
            SUPP_POOL_API:'http://127.0.0.1:9940', SUPP_POOL_ADMIN_KEY: POOL_ADMIN,
            SUPP_MAIL_API:'http://127.0.0.1:8099', SUPP_MAIL_KEY: MF_KEY,
            SUPP_MAIL_ACQUIRE_PATH:'/v1/mailboxes/acquire',
-           SUPP_REGISTER_FILE: path.join(ROOT,'config','pool-register.mailfarm.json'),
+           SUPP_REGISTER_FILE: REG_FILE,
+           SUPP_SMS_GET: SMS.get || '', SUPP_SMS_POLL: SMS.poll || '', SUPP_SMS_KEY: SMS.token || '',
            SUPP_STATE_FILE: path.join(STATE,'pool-supply.json'),
            SUPP_LOG_FILE: path.join(LOGD,'pool-supply.log'),
-           SUPP_POOL_MIN: process.env.SUPP_POOL_MIN || '0', SUPP_POOL_MAX:'200', SUPP_REFILL_BATCH:'5',
+           SUPP_POOL_MIN: process.env.SUPP_POOL_MIN || String(SECRETS.pool_min == null ? 0 : SECRETS.pool_min), SUPP_POOL_MAX:'200', SUPP_REFILL_BATCH:'5',
            SUPP_INTERVAL_MS:'60000', SUPP_CHECKIN_EVERY:'20' },
     port: 9950, health: 'http://127.0.0.1:9950/healthz'
   },
