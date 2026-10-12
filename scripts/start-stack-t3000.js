@@ -43,7 +43,7 @@ const PROCS = {
            H3P_ADAPTER_FILE: path.join(ROOT,'config','pool-adapter.hailuo-web.json'),
            H3P_DB: path.join(ROOT,'runtime','data','h3platformpool.db'),
            H3P_CHECKIN_MS: process.env.H3P_CHECKIN_MS || '60000',
-           H3P_DAILY_CREDITS: '300', H3P_ACCOUNT_CAP:'1200', H3P_MAX_RETRIES:'3' },
+           H3P_DAILY_CREDITS: '300', H3P_ACCOUNT_CAP:'1200', H3P_MAX_RETRIES:'3', H3P_CREDIT_PER_CLIP: process.env.H3P_CREDIT_PER_CLIP || '6' },
     port: 9940, health: 'http://127.0.0.1:9940/v1/public/stats'
   },
   'pool-supply': {
