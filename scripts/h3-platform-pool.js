@@ -92,6 +92,8 @@ db.exec('CREATE TABLE IF NOT EXISTS api_keys (key TEXT PRIMARY KEY, label TEXT, 
 db.exec('CREATE TABLE IF NOT EXISTS codes (code TEXT PRIMARY KEY, credits REAL, used_at INTEGER, used_by_key TEXT, created_at INTEGER);');
 db.exec('CREATE TABLE IF NOT EXISTS tasks (id TEXT PRIMARY KEY, api_key TEXT, model TEXT, spec_json TEXT, status TEXT, credits_cost REAL, account_id INTEGER, attempts INTEGER DEFAULT 0, upstream_task_id TEXT, result_url TEXT, error TEXT, created_at INTEGER, updated_at INTEGER);');
 db.exec('CREATE TABLE IF NOT EXISTS audit (id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER, account_id INTEGER, api_key TEXT, action TEXT, credits_before REAL, credits_after REAL, delta REAL, detail TEXT);');
+/* R139：新人礼额度有到期时间（海螺 sub_credits[].end_time），加列以便「到期自动换号」 */
+try { db.exec('ALTER TABLE accounts ADD COLUMN expires_at INTEGER DEFAULT 0'); } catch (e) {}
 
 const now = () => Date.now();
 function audit(account_id, api_key, action, before, after, detail) {
@@ -100,6 +102,33 @@ function audit(account_id, api_key, action, before, after, detail) {
       (before === undefined || after === undefined) ? null : after - before, detail || null);
 }
 const listAccounts = () => db.prepare('SELECT * FROM accounts ORDER BY id').all();
+
+/* R139「到期自动换号」：新人礼额度时效到点 -> 直接删号，池子少号后由 pool-supply 自动补新号。
+   H3P_AUTO_PRUNE_EXPIRED=0 可关；H3P_AUTO_PRUNE_ZERO=1 时连「0 额度」号一起清。 */
+const AUTO_PRUNE_EXPIRED = String(process.env.H3P_AUTO_PRUNE_EXPIRED || '1') !== '0';
+const AUTO_PRUNE_ZERO = String(process.env.H3P_AUTO_PRUNE_ZERO || '0') === '1';
+function expireSweep() {
+  const out = { expired: 0, zero: 0 };
+  if (!AUTO_PRUNE_EXPIRED && !AUTO_PRUNE_ZERO) return out;
+  for (const a of listAccounts()) {
+    if (Number(a.inflight || 0) > 0 || Number(a.held || 0) > 0) continue;
+    const exp = Number(a.expires_at || 0);
+    if (AUTO_PRUNE_EXPIRED && exp > 0 && now() > exp) {
+      audit(a.id, null, 'credits_expired', a.credits, 0, 'expires_at=' + exp);
+      log('新人礼到期弃号：账号 #' + a.id + ' ' + a.label + ' exp=' + new Date(exp).toISOString());
+      db.prepare('DELETE FROM accounts WHERE id=?').run(a.id);
+      out.expired++;
+      continue;
+    }
+    if (AUTO_PRUNE_ZERO && Number(a.credits || 0) <= 0) {
+      audit(a.id, null, 'prune_zero_credit', a.credits, 0, 'auto_prune_zero');
+      log('0 额度弃号：账号 #' + a.id + ' ' + a.label);
+      db.prepare('DELETE FROM accounts WHERE id=?').run(a.id);
+      out.zero++;
+    }
+  }
+  return out;
+}
 const getAccount = (id) => db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
 
 /* ------------------------- 上游适配器（config/pool-adapter.json） ------------------------- */
@@ -252,13 +281,25 @@ async function syncWallet(acct) {
 }
 
 /* 导入时探余额：200 -> 回写真实余额；401/403 -> 判该号无效；其它 -> 保持原样等下一轮 */
+/* 从上游钱包响应里抽「额度到期时间」：适配器返回的 sub_credits[].end_time 取最大 */
+function walletExpiry(w) {
+  try {
+    const subs = (w && w.json && w.json.data && w.json.data.sub_credits) || [];
+    let max = 0;
+    for (const s of subs) { const e = Number(s && s.end_time); if (isFinite(e) && e > max) max = e; }
+    return max;
+  } catch (e) { return 0; }
+}
+
 async function probeWallet(acct) {
   try {
     const w = await upstream('wallet', '/official/v2/wallet', { token: acct.token });
     const bal = Number(w.g.credits);
     if (w.status === 200 && isFinite(bal)) {
-      db.prepare('UPDATE accounts SET credits=?, fail_reason=NULL WHERE id=?').run(bal, acct.id);
-      return { ok: true, credits: bal };
+      const exp = walletExpiry(w);
+      if (exp > 0) db.prepare('UPDATE accounts SET credits=?, expires_at=?, fail_reason=NULL WHERE id=?').run(bal, exp, acct.id);
+      else db.prepare('UPDATE accounts SET credits=?, fail_reason=NULL WHERE id=?').run(bal, acct.id);
+      return { ok: true, credits: bal, expires_at: exp };
     }
     if (w.status === 401 || w.status === 403) { disableAccount(acct, 'PROBE_AUTH_FAILED'); return { ok: false, status: w.status }; }
     return { ok: false, status: w.status };
@@ -442,7 +483,10 @@ async function checkinTick(force) {
         const before = Number(r.g.credits_before);
         if (isFinite(after)) {
           const gained = isFinite(before) ? (after - before) : (after - Number(a.credits || 0));
-          db.prepare('UPDATE accounts SET credits=?, last_checkin_at=?, checkin_count=checkin_count+1, fail_reason=NULL WHERE id=?')
+          const _exp = walletExpiry(r);
+          if (_exp > 0) db.prepare('UPDATE accounts SET credits=?, expires_at=?, last_checkin_at=?, checkin_count=checkin_count+1, fail_reason=NULL WHERE id=?')
+            .run(after, _exp, now(), a.id);
+          else db.prepare('UPDATE accounts SET credits=?, last_checkin_at=?, checkin_count=checkin_count+1, fail_reason=NULL WHERE id=?')
             .run(after, now(), a.id);
           audit(a.id, null, 'daily_checkin', (isFinite(before) ? before : undefined), after, 'delta=' + (r.g.delta || 0));
           const s = checkinMark(a.id, gained);
@@ -654,7 +698,7 @@ async function handle(req, res) {
   if (url.startsWith('/pool/')) {
     if (!isAdmin) return send(res, 401, { code: 'admin_required', message: '带上 x-admin-key' });
     if (req.method === 'GET' && url === '/pool/stats') {
-      return send(res, 200, { accounts: listAccounts(), inflight, max_inflight: MAX_INFLIGHT,
+      return send(res, 200, { accounts: listAccounts(), inflight, max_inflight: MAX_INFLIGHT, auto_prune: { expired: AUTO_PRUNE_EXPIRED, zero: AUTO_PRUNE_ZERO },
         config: { checkin_interval_ms: CHECKIN_MS, checkin_backoff_max_ms: CHECKIN_BACKOFF_MAX_MS, daily_credits: DAILY_CREDITS, reserve_factor: RESERVE_FACTOR, max_retries: MAX_RETRIES, credit_per_clip: CREDIT_PER_CLIP },
         checkin_state: Array.from(checkinState.entries()).map(([id, s]) => ({ id: id, no_gain: s.noGain, wait_ms: checkinWaitMs(id), last_attempt_at: s.lastAttemptAt })),
         audit: db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 50').all() });
@@ -754,7 +798,7 @@ async function pollPending() {
   }
 }
 let checkinBusy = false;
-setInterval(async () => { if (checkinBusy) return; checkinBusy = true; try { await checkinTick(); } finally { checkinBusy = false; } }, Math.min(CHECKIN_MS, 5000));
+setInterval(async () => { if (checkinBusy) return; checkinBusy = true; try { await checkinTick(); const sw = expireSweep(); if (sw.expired || sw.zero) log('到期清扫: 过期弃号 ' + sw.expired + ' / 零额度弃号 ' + sw.zero); } finally { checkinBusy = false; } }, Math.min(CHECKIN_MS, 5000));
 
 setInterval(async () => { if (pollBusy) return; pollBusy = true; try { await pollPending(); } catch (e) {} finally { pollBusy = false; } }, Math.max(3000, Number(process.env.H3P_POLL_MS || 5000)));
 

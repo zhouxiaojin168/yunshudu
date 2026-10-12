@@ -463,7 +463,8 @@ async function main() {
   if (MAIL_API) log('邮箱补号已就绪 mailfarm=' + MAIL_API + ' prefix=' + MAIL_PREFIX);
   if (ONCE) { const r = await guardRound(true); log('--once: ' + JSON.stringify(r)); process.exit(0); }
   server.listen(PORT, '127.0.0.1', () => log('pool-supply listening on 127.0.0.1:' + PORT));
-  await guardRound(true);
+  /* R139 FIX: startup must NOT force-refill -- guardRound(true) here made every stack restart burn one d1jiema SMS number. Refill is now only triggered by POOL_MIN (and manual /supply/guard force). */
+  await guardRound(false);
   setInterval(() => { guardRound(false).catch((e) => log('round error ' + e.message)); }, INTERVAL);
 }
 
