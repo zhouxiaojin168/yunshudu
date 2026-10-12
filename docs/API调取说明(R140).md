@@ -85,3 +85,21 @@ node scripts/pool-ledger.js --pool http://114.66.16.225:9940 --key <admin-key>
 node scripts/pool-ledger.js --json
 ```
 输出每个号的 `credits / 可出图数 / 健康 / 到期时间 / 还剩几小时`，并汇总「合计额度、可出图数、每张图上游成本」。
+
+
+## 3.1 模型名解析规则（R140b 修正，重要）
+
+池子**按账号所在站的适配器模型表**查 `model`（`h3-platform-pool.js` -> `modelsOf(site)[model]`），查不到就回退到内置站牌价（`MiniMax-H3`=1000 credit/条）。
+
+| 服务器/本地实际用的适配器 | 表里原本的键 | 现象 |
+|---|---|---|
+| `pool-adapter.hailuo-multi.json`（服务器在用，多站 cn+intl） | `MiniMax-Image` / `seedream-4.5` / `gpt-image-1.5` / `image-01` | 传上游真名 `all-in-one-image-pro` **查不到** -> 按 1000 credit 报价 -> `402 insufficient_quota: need 1000` |
+| `pool-adapter.hailuo-web.json`（单站国内） | `all-in-one-image-pro` / ... | 传 `MiniMax-Image` 原本查不到 |
+
+**R140b 已修**：三份适配器互相加别名，现在这些名字等价、都能用：
+
+- 国内站：`MiniMax-Image` == `all-in-one-image-pro`（6 credit，1K/2K）
+- 海外站：`MiniMax-Image` == `nano-banana2`（6 credit）
+- 另有 `seedream-4.5`(4) / `gpt-image-1.5`(8) / `image-01`(1)
+
+> 排查口诀：**402 报 need 1000 = 模型名没落到适配器表里**，不是额度不够、也不是上游挂了。

@@ -94,6 +94,27 @@
             },
             "projectID": "0"
           }
+        },
+        "all-in-one-image-pro": {
+          "modelID": "all-in-one-image-pro",
+          "resolution": "1K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 6,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "all-in-one-image-pro",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
         }
       }
     },
@@ -152,6 +173,27 @@
             "quantity": "{{n:quantity}}",
             "parameter": {
               "modelID": "gpt-image-1.5",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "nano-banana2": {
+          "modelID": "nano-banana2",
+          "resolution": "1K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 6,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "nano-banana2",
               "desc": "{{prompt}}",
               "fileList": [],
               "useOriginPrompt": true,

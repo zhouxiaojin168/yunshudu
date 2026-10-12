@@ -128,6 +128,27 @@
             },
             "projectID": "0"
           }
+        },
+        "MiniMax-Image": {
+          "modelID": "all-in-one-image-pro",
+          "resolution": "1K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 6,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "all-in-one-image-pro",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
         }
       },
       "map": {
