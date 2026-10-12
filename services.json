@@ -283,6 +283,51 @@
       "note": "一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "imap-bridge",
+      "type": "node",
+      "task": "yunshudu-imap-bridge",
+      "managed": "auto",
+      "port": 8098,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\imap-mail-bridge.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "imap-bridge"
+      ],
+      "env": {
+        "IMB_HOST": "mail.spacemail.com",
+        "IMB_PORT": "993",
+        "IMB_TLS": "1",
+        "IMB_TLS_INSECURE": "0",
+        "IMB_DOMAIN": "qingzhou.autos",
+        "IMB_PREFIX": "hl",
+        "IMB_HTTP_HOST": "127.0.0.1",
+        "IMB_HTTP_PORT": "8098",
+        "IMB_POLL_MS": "3000",
+        "IMB_LOOKBACK_H": "24",
+        "IMB_MARK_SEEN": "0"
+      },
+      "envFrom": {
+        "IMB_USER": "IMAP_BRIDGE_USER",
+        "IMB_PASS": "IMAP_BRIDGE_PASS",
+        "IMB_API_KEY": "IMAP_BRIDGE_API_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8098/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "IMAP 收信桥（零依赖）：把真实 IMAP 邮箱（Spacemail 等）包装成 mailfarm 同款 HTTP 契约，pool-supply 只要把 SUPP_MAIL_API 指到 http://127.0.0.1:8098 即可切换，注册流程零改动。只监听 127.0.0.1，不对外暴露。凭据走 secrets.txt（IMAP_BRIDGE_USER/PASS/API_KEY），不入库。未配凭据时 /healthz 仍返回 200，仅取码会报错。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
   ],
   "restartOnDeployDoc": "restartOnDeploy=true: 每次部署都硬重启该服务（用于仓库内的 Node 脚本，保证新代码生效）。false/缺省: 仅当健康检查失败才重启。"
