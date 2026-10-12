@@ -199,25 +199,18 @@ foreach ($s in $svcs) {
 
 Write-Output ('  summary: ' + ($results -join ' '))
 
-# ---- keeper（服务看门狗）：确保每 5 分钟探端口、掉线自动拉起的计划任务存在 ----
+# ---- keeper（服务看门狗）：每 5 分钟探端口、掉线自动拉起（用 schtasks，避免 2012R2 上 RepetitionInterval 参数限制）----
 try {
   $keeperScript = Join-Path $Root 'app\deploy\keep-services.ps1'
-  $kt = Get-ScheduledTask -TaskName 'yunshudu-keeper' -ErrorAction SilentlyContinue
-  if (-not $kt) {
-    if (Test-Path -LiteralPath $keeperScript) {
-      $q = [char]34
-      $ka = '-NoProfile -ExecutionPolicy Bypass -File ' + $q + $keeperScript + $q
-      $kaction    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $ka
-      $ktg        = New-ScheduledTaskTrigger -Once -At ((Get-Date).Date) -RepetitionInterval (New-TimeSpan -Minutes 5)
-      $kset       = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromMinutes(10))
-      $kpri       = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-      Register-ScheduledTask -TaskName 'yunshudu-keeper' -Action $kaction -Trigger $ktg -Settings $kset -Principal $kpri -Force | Out-Null
-      Write-Output '  keeper task registered (every 5 min)'
-    } else {
-      Write-Output ('  keeper script missing: ' + $keeperScript)
-    }
+  $existing = Get-ScheduledTask -TaskName 'yunshudu-keeper' -ErrorAction SilentlyContinue
+  if ($existing) {
+    Write-Output ('  keeper task present: ' + $existing.State)
+  } elseif (Test-Path -LiteralPath $keeperScript) {
+    $tr = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' + $keeperScript + '"'
+    $out = & schtasks.exe /Create /SC MINUTE /MO 5 /TN yunshudu-keeper /TR $tr /RU SYSTEM /RL HIGHEST /F 2>&1
+    Write-Output ('  keeper task create: ' + ($out -join ' '))
   } else {
-    Write-Output ('  keeper task present: ' + $kt.State)
+    Write-Output ('  keeper script missing: ' + $keeperScript)
   }
 } catch { Write-Output ('  keeper ensure FAIL: ' + $_.Exception.Message) }
 Write-Output 'post-deploy done'
