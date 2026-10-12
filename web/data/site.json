@@ -1,17 +1,17 @@
 {
-  "generatedAt": "2026-10-11T15:09:40.270Z",
+  "generatedAt": "2026-10-12T21:23:33.344Z",
   "source": "http://127.0.0.1:3000",
   "site": {
-    "name": "yunshudu",
+    "name": "幻镜AI",
     "version": "v1.0.0-rc.43",
     "register_enabled": true,
     "password_register_enabled": true,
     "quota_per_unit": 500000,
-    "usd_exchange_rate": 6.8,
+    "usd_exchange_rate": 7.3,
     "price": 7.3,
-    "currency_symbol": "¤",
-    "currency_rate": 1,
-    "server_address": "http://localhost:3000",
+    "currency_symbol": "条",
+    "currency_rate": 20.857142857142858,
+    "server_address": "http://localhost:3300",
     "checkin_enabled": false,
     "pricing_version": "a42d372ccf0b5dd13ecf71203521f9d2"
   },
@@ -20,25 +20,46 @@
   ],
   "vendors": [
     {
-      "id": -1006,
-      "name": "Google",
-      "icon": "Gemini.Color"
-    },
-    {
       "id": -1009,
       "name": "MiniMax",
       "icon": "Minimax.Color"
     }
   ],
   "usable_group": {
-    "default": "Default group",
-    "vip": "VIP group"
+    "default": "MiniMax H3 全模型",
+    "vip": "vip分组"
   },
   "models": [
     {
-      "model_name": "gemini-nano-banana-2.1-image",
+      "model_name": "audios_understand",
       "quota_type": 1,
-      "model_price": 0.05,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "describe_images",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "listen_audio",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
       "model_ratio": 0,
       "completion_ratio": 0,
       "groups": [
@@ -51,7 +72,33 @@
     {
       "model_name": "MiniMax-H3",
       "quota_type": 1,
-      "model_price": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "MiniMax-H3-Max",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "MiniMax-Hailuo-2.3",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
       "model_ratio": 0,
       "completion_ratio": 0,
       "groups": [
@@ -64,7 +111,7 @@
     {
       "model_name": "MiniMax-Image",
       "quota_type": 1,
-      "model_price": 0.05,
+      "model_price": 0.047945205479,
       "model_ratio": 0,
       "completion_ratio": 0,
       "groups": [
@@ -86,60 +133,92 @@
       "endpoints": [
         "openai"
       ]
+    },
+    {
+      "model_name": "MiniMax-Music",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "MiniMax-Speech",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "reverse_image_search",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "search_images",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
+    },
+    {
+      "model_name": "videos_understand",
+      "quota_type": 1,
+      "model_price": 0.047945205479,
+      "model_ratio": 0,
+      "completion_ratio": 0,
+      "groups": [
+        "default"
+      ],
+      "endpoints": [
+        "openai"
+      ]
     }
   ],
   "channels": [
     {
-      "id": 9,
-      "name": "本地演示-A组(健康池)",
-      "base_url": "http://127.0.0.1:9921",
-      "models": [
-        "MiniMax-H3",
-        "MiniMax-M3"
-      ],
-      "status": 1,
-      "priority": 5,
-      "weight": 10,
-      "auto_ban": 1,
-      "is_multi_key": true,
-      "key_count": 2
-    },
-    {
-      "id": 10,
-      "name": "本地演示-B组(欠费池)",
-      "base_url": "http://127.0.0.1:9922",
-      "models": [
-        "MiniMax-H3",
-        "MiniMax-M3"
-      ],
-      "status": 1,
-      "priority": 5,
-      "weight": 10,
-      "auto_ban": 1,
-      "is_multi_key": false,
-      "key_count": 1
-    },
-    {
-      "id": 11,
-      "name": "池②-Google账号池(flow-pool)",
-      "base_url": "http://127.0.0.1:9930",
-      "models": [
-        "gemini-nano-banana-2.1-image"
-      ],
-      "status": 1,
-      "priority": 100,
-      "weight": 10,
-      "auto_ban": 0,
-      "is_multi_key": false,
-      "key_count": 1
-    },
-    {
-      "id": 12,
+      "id": 15,
       "name": "平台池-海螺H3式(platform-pool)",
       "base_url": "http://127.0.0.1:9940",
       "models": [
         "MiniMax-H3",
-        "MiniMax-Image"
+        "MiniMax-H3-Max",
+        "MiniMax-Hailuo-2.3",
+        "MiniMax-Image",
+        "MiniMax-M3",
+        "MiniMax-Music",
+        "MiniMax-Speech",
+        "audios_understand",
+        "describe_images",
+        "listen_audio",
+        "reverse_image_search",
+        "search_images",
+        "videos_understand"
       ],
       "status": 1,
       "priority": 110,
