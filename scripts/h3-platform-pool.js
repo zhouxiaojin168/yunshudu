@@ -61,6 +61,12 @@ const SPECS = [
   { model: 'H3-Max', kind: 'video', unit_credits: CREDIT_PER_CLIP, spec: '1080P-6s' },
   { model: 'Hailuo-2.3', kind: 'video', unit_credits: CREDIT_PER_CLIP, spec: '768P-6s' },
   { model: 'MiniMax-Image', kind: 'image', unit_credits: 4, spec: '1K-1张' },
+  /* R140c: 适配器里的上游真名/别名也登记进来，避免 specOf() 兜底成 1000 credit/条 */
+  { model: 'all-in-one-image-pro', kind: 'image', unit_credits: 6, spec: '1K/2K-1张' },
+  { model: 'nano-banana2', kind: 'image', unit_credits: 6, spec: '1K/2K-1张' },
+  { model: 'seedream-4.5', kind: 'image', unit_credits: 4, spec: '2K-1张' },
+  { model: 'gpt-image-1.5', kind: 'image', unit_credits: 8, spec: 'Medium-1张' },
+  { model: 'image-01', kind: 'image', unit_credits: 1, spec: '1K-1张' },
   { model: 'MiniMax-Speech', kind: 'audio', unit_credits: 0.1, spec: 'per-char' },
   { model: 'MiniMax-Music', kind: 'music', unit_credits: 150, spec: 'per-song' },
   { model: 'MiniMax-M3', kind: 'chat', unit_credits: 0, spec: 'per-call' },
@@ -690,6 +696,7 @@ async function handle(req, res) {
     }
     const model = String(body.model || (url === '/v1/chat/completions' ? 'MiniMax-M3' : 'MiniMax-H3'));
     const s = specOf(model);
+    const specKnown = SPECS.some((x) => x.model === model);
     let cost = s.unit_credits;
     if (s.kind === 'chat') cost = 0;
     /* 适配器给了 models 映射 -> 用上游真实单价与参数（海螺：modelID + resolution/aspectRatio/quality 的 valueStr）
@@ -703,7 +710,10 @@ async function handle(req, res) {
       return { cost: Number(mp.cost) || cost, params: Object.assign({ prompt: promptStr, quantity: quantity, limit: 20, __tpl: mp.body }, mp) };
     };
     const siteCosts = (SITES ? Object.keys(SITES) : ['']).map((st) => { const rp = resolveParams(st); return rp ? rp.cost : 0; });
-    const maxCost = Math.max(cost, siteCosts.length ? Math.max.apply(null, siteCosts) : 0);
+    const adapterMax = siteCosts.length ? Math.max.apply(null, siteCosts) : 0;
+    /* R140c：内置规格表不认识、但适配器认识的名字（上游真名/别名）-> 以适配器单价为准，
+       否则 maxCost 会兜底成 1000，pickAccount(need=maxCost*2) 直接 pool_empty */
+    const maxCost = specKnown ? Math.max(cost, adapterMax) : (adapterMax || cost);
     const eager = resolveParams(DEFAULT_SITE);
     if (eager) cost = eager.cost;
     if (url === '/v1/audio/speech' && body.input) cost = Math.max(0.1, String(body.input).length * 0.1);
