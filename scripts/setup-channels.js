@@ -6,7 +6,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const BASE = 'http://127.0.0.1:3300';
+const BASE = 'http://127.0.0.1:3000';
 const ROOT = path.resolve(__dirname, '..');
 const cred = fs.readFileSync(path.join(ROOT, 'runtime', 'credentials.txt'), 'utf8');
 const token = (cred.match(/^access_token:\s*(.+)$/m) || [])[1];

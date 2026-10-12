@@ -7,7 +7,7 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
-const BASE = 'http://127.0.0.1:3300';
+const BASE = 'http://127.0.0.1:3000';
 const POOL = 'http://127.0.0.1:9940';
 const MOCK = 'http://127.0.0.1:9941';
 const ADMIN = 'sk-hl-admin';

@@ -4,7 +4,7 @@
 const fs=require('fs'),path=require('path');
 const ROOT=path.resolve(__dirname,'..');
 const CF=path.join(ROOT,'runtime','credentials.txt');
-const BASE='http://127.0.0.1:3300';
+const BASE='http://127.0.0.1:3000';
 (async()=>{
   const txt=fs.readFileSync(CF,'utf8');
   const pw=(txt.match(/^password:\s*(.+)$/m)||[])[1];

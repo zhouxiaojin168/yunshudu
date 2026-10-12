@@ -4,7 +4,7 @@
  *   node scripts/public-gateway.js
  *
  * 为什么需要它：
- *   1) 直接把 new-api(3300) 挂上隧道 = 把整个管理后台暴露在公网，绝对不行；
+ *   1) 直接把 new-api(3000) 挂上隧道 = 把整个管理后台暴露在公网，绝对不行；
  *   2) GitHub Pages 与隧道域名不同源，必须由本层补 CORS 头，浏览器才读得到数据。
  *
  * 只放行门户真正需要的两个只读接口，其余一律 404。
@@ -15,7 +15,7 @@ const path = require('path');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.GW_PORT || 8898);
-const UPSTREAM = process.env.GW_UPSTREAM || 'http://127.0.0.1:3300';
+const UPSTREAM = process.env.GW_UPSTREAM || 'http://127.0.0.1:3000';
 const LOGF = path.join(ROOT, 'runtime', 'logs', 'public-gateway.log');
 
 /* ---- 白名单：门户(data视图)只用这两个，一个不多 ---- */

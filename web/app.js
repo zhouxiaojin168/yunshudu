@@ -1,5 +1,5 @@
 /* ===== yunshudu 门户前端 =====
- * 数据源优先级：页面内嵌快照(#snapshot) → 在线实时拉取(同源 /api 或 http://127.0.0.1:3300)
+ * 数据源优先级：页面内嵌快照(#snapshot) → 在线实时拉取(同源 /api 或 http://127.0.0.1:3000)
  */
 (function () {
   'use strict';
@@ -10,7 +10,7 @@
     ? window.__API_BASE__.replace(/\/+$/, '')
     : ((location.protocol === 'http:' || location.protocol === 'https:')
         ? ''                               // 由 serve-web.js 同源代理 /api
-        : 'http://127.0.0.1:3300');        // 直接双击打开时，指向本地网关
+        : 'http://127.0.0.1:3000');        // 直接双击打开时，指向本地网关
 
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) {

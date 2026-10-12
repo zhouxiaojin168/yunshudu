@@ -12,7 +12,7 @@ const path = require('path');
 const WEB = path.resolve(__dirname, '..', 'web');
 const PORT = Number(process.argv[2] || process.env.WEB_PORT || 8899);
 const API_HOST = process.env.API_HOST || '127.0.0.1';
-const API_PORT = Number(process.env.API_PORT || 3300);
+const API_PORT = Number(process.env.API_PORT || 3000);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

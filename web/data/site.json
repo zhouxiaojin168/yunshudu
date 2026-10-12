@@ -1,6 +1,6 @@
 {
   "generatedAt": "2026-10-11T15:09:40.270Z",
-  "source": "http://127.0.0.1:3300",
+  "source": "http://127.0.0.1:3000",
   "site": {
     "name": "yunshudu",
     "version": "v1.0.0-rc.43",
@@ -11,7 +11,7 @@
     "price": 7.3,
     "currency_symbol": "¤",
     "currency_rate": 1,
-    "server_address": "http://localhost:3300",
+    "server_address": "http://localhost:3000",
     "checkin_enabled": false,
     "pricing_version": "a42d372ccf0b5dd13ecf71203521f9d2"
   },

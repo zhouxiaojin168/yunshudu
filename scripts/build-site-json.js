@@ -9,7 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 const ROOT = path.resolve(__dirname, '..');
-const BASE = process.env.SITE_API || 'http://127.0.0.1:3300';
+const BASE = process.env.SITE_API || 'http://127.0.0.1:3000';
 const OUT = path.join(ROOT, 'web', 'data', 'site.json');
 const IDX = path.join(ROOT, 'web', 'index.html');
 

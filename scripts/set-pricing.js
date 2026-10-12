@@ -3,7 +3,7 @@ const ROOT='E:\\中转站测试\\newapi-relay-stack';
 const cred=fs.readFileSync(path.join(ROOT,'runtime','credentials.txt'),'utf8');
 const tok=(cred.match(/^access_token:\s*(.+)$/m)||[])[1];
 const H={'Content-Type':'application/json','Authorization':'Bearer '+tok,'New-Api-User':'1'};
-const api=async(m,u,b)=>{const r=await fetch('http://127.0.0.1:3300'+u,{method:m,headers:H,body:b?JSON.stringify(b):undefined});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){j=t}return{s:r.status,j}};
+const api=async(m,u,b)=>{const r=await fetch('http://127.0.0.1:3000'+u,{method:m,headers:H,body:b?JSON.stringify(b):undefined});const t=await r.text();let j;try{j=JSON.parse(t)}catch(e){j=t}return{s:r.status,j}};
 (async()=>{
   const cur=await api('GET','/api/option/');
   const arr=cur.j.data||[];

@@ -1,12 +1,12 @@
 /**
- * h3pool-e2e.js -- 平台池全链路 E2E（客户端 -> new-api(3300) -> 平台池(9940) -> 官方模拟(9941)）
+ * h3pool-e2e.js -- 平台池全链路 E2E（客户端 -> new-api(3000) -> 平台池(9940) -> 官方模拟(9941)）
  *   node scripts/h3pool-e2e.js
  * 验证：① 客户端只管买 credit，池内换号它对无感；② 402 换号；③ 池空 -> 5xx；④ 签到补分自动恢复
  */
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
-const GW = 'http://127.0.0.1:3300';
+const GW = 'http://127.0.0.1:3000';
 const POOL = 'http://127.0.0.1:9940';
 const MOCK = 'http://127.0.0.1:9941';
 const ADMIN = 'sk-hl-admin';

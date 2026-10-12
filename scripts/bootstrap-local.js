@@ -1,5 +1,5 @@
 ﻿const fs=require('fs');
-const B='http://127.0.0.1:3300';
+const B='http://127.0.0.1:3000';
 const OUT='E:\\中转站测试\\newapi-relay-stack\\runtime\\';
 const pw='wz-'+Math.random().toString(36).slice(2,10)+'!A9';
 const j=async(u,o={})=>{const r=await fetch(B+u,{...o,headers:{'Content-Type':'application/json',...(o.headers||{})}});const t=await r.text();let b=null;try{b=JSON.parse(t);}catch(e){b=t;}return {s:r.status,b,r};};
@@ -23,6 +23,6 @@ const j=async(u,o={})=>{const r=await fetch(B+u,{...o,headers:{'Content-Type':'a
  const st2=await j('/api/status');
  console.log('status now -> system_name=',st2.b.data.system_name,'register=',st2.b.data.register_enabled,'qpu=',st2.b.data.quota_per_unit,'rate=',st2.b.data.usd_exchange_rate);
  fs.writeFileSync(OUT+'credentials.txt',
-  ['new-api local instance (newapi-relay-stack)','url: http://127.0.0.1:3300','username: root','password: '+pw,'access_token: '+token,'created: '+new Date().toISOString()].join('\n'),'utf8');
+  ['new-api local instance (newapi-relay-stack)','url: http://127.0.0.1:3000','username: root','password: '+pw,'access_token: '+token,'created: '+new Date().toISOString()].join('\n'),'utf8');
  console.log('credentials saved -> runtime/credentials.txt');
 })();

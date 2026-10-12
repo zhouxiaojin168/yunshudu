@@ -5,7 +5,7 @@
 const fs=require('fs'),path=require('path');
 const ROOT=path.resolve(__dirname,'..');
 const CF=path.join(ROOT,'runtime','credentials.txt');
-const BASE='http://127.0.0.1:3300';
+const BASE='http://127.0.0.1:3000';
 const SITE=process.argv[2]||'yunshudu';
 
 (async()=>{
@@ -19,7 +19,7 @@ const SITE=process.argv[2]||'yunshudu';
   const H={'Content-Type':'application/json','Authorization':'Bearer '+tok,'New-Api-User':String(uid)};
   const put=async(k,v)=>{const r=await fetch(BASE+'/api/option/',{method:'PUT',headers:H,body:JSON.stringify({key:k,value:v})});const j=await r.json();console.log('  PUT',k,'=',v,'->',r.status,(j.success?'ok':JSON.stringify(j).slice(0,80)));};
   await put('SystemName', SITE);
-  await put('ServerAddress', 'http://localhost:3300');
+  await put('ServerAddress', 'http://localhost:3000');
   await put('RegisterEnabled','true');
   await put('PasswordRegisterEnabled','true');
   await put('QuotaPerUnit','500000');

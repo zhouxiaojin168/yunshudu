@@ -1,12 +1,12 @@
 /**
- * pool2-e2e.js -- 池② 全链路端到端（客户端 -> new-api(3300) -> flow-pool(9930) -> mock-flow(9931)）
+ * pool2-e2e.js -- 池② 全链路端到端（客户端 -> new-api(3000) -> flow-pool(9930) -> mock-flow(9931)）
  *   node scripts/pool2-e2e.js
  * 中途会把一个账号打成 429，验证「账号被熔断但客户端仍然拿到 200」。
  */
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
-const GW = 'http://127.0.0.1:3300';
+const GW = 'http://127.0.0.1:3000';
 const POOL = 'http://127.0.0.1:9930';
 const MOCK = 'http://127.0.0.1:9931';
 const POOL_KEY = process.env.POOL_KEY || 'sk-pool-google-demo';

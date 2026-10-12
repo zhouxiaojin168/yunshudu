@@ -6,7 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const KEY = fs.readFileSync(path.join(ROOT, 'runtime', 'test-token.txt'), 'utf8').trim();
-const BASE = 'http://127.0.0.1:3300';
+const BASE = 'http://127.0.0.1:3000';
 const N = Number(process.argv[2] || 8);
 
 (async () => {

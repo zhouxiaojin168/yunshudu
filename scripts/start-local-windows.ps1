@@ -7,7 +7,7 @@ $Data   = Join-Path $Root 'runtime\data'
 $LogDir = Join-Path $Root 'runtime\logs'
 New-Item -ItemType Directory -Force -Path $Data,$LogDir | Out-Null
 if (-not (Test-Path $Bin)) { throw "missing $Bin -- run scripts\download-release.ps1 first" }
-$env:PORT           = if ($env:PORT) { $env:PORT } else { '3300' }
+$env:PORT           = if ($env:PORT) { $env:PORT } else { '3000' }
 $env:SESSION_SECRET = if ($env:SESSION_SECRET) { $env:SESSION_SECRET } else { 'change-me-session-secret' }
 $env:CRYPTO_SECRET  = if ($env:CRYPTO_SECRET) { $env:CRYPTO_SECRET } else { $env:SESSION_SECRET }
 $env:GIN_MODE       = 'release'

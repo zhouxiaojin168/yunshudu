@@ -16,10 +16,10 @@ if (-not (Test-Path $bin)) {
 } else { Write-Host ('    already present: ' + $bin) }
 
 # 2) 网关
-Step 2 '启动 new-api (3300)'
+Step 2 '启动 new-api (3000)'
 $running = $false
-try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:3300/api/status' -UseBasicParsing -TimeoutSec 3; $running = $true } catch {}
-if ($running) { Write-Host '    already listening on 3300' }
+try { $null = Invoke-WebRequest -Uri 'http://127.0.0.1:3000/api/status' -UseBasicParsing -TimeoutSec 3; $running = $true } catch {}
+if ($running) { Write-Host '    already listening on 3000' }
 else { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'start-local-windows.ps1') }
 
 if (-not $Node) { Write-Host 'skip 3-8: node not found'; exit 0 }
@@ -75,5 +75,5 @@ if ($webUp) { Write-Host '    already listening on 8899' }
 else { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'start-web.ps1') }
 
 Write-Host ''
-Write-Host 'DONE  panel : http://127.0.0.1:3300   (see runtime\credentials.txt)' -ForegroundColor Green
+Write-Host 'DONE  panel : http://127.0.0.1:3000   (see runtime\credentials.txt)' -ForegroundColor Green
 Write-Host 'DONE  portal: http://127.0.0.1:8899' -ForegroundColor Green

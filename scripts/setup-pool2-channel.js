@@ -10,7 +10,7 @@
 const fs = require('fs');
 const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
-const BASE = 'http://127.0.0.1:3300';
+const BASE = 'http://127.0.0.1:3000';
 const POOL_BASE = 'http://127.0.0.1:9930';
 const POOL_KEY = process.env.POOL_KEY || 'sk-pool-google-demo';
 const MODEL = 'gemini-nano-banana-2.1-image';
