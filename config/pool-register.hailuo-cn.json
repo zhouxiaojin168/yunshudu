@@ -1,0 +1,63 @@
+{
+  "_note": "补号源④：海螺国内站（hailuoai.com）手机号+短信 注册工作流。步骤带 sign='hailuo'，由 pool-supply 内置的 hailuo-sign.js 自动加 yy 签名与公共 query 参数。",
+  "_why_domestic": "实测：海外站 hailuoai.video 网页端登录只有 Google / Apple（/login 页仅两个按钮），没有手机号/邮箱入口；国内站 hailuoai.com 网页端是 手机号+短信验证码+密码。所以「用接码平台自动注册」只对国内站成立。",
+  "_need": "接码平台三件套（写进服务器 C:\\yunshudu\\secrets.txt 后重启 yunshudu-pool-supply）：SUPP_SMS_GET / SUPP_SMS_POLL / SUPP_SMS_KEY（可选 SUPP_SMS_HEADERS 走 JSON 请求头）。",
+  "_unverified": "sms/send 与 login/phone 两个接口已实测存在（返回 400 code=2 说明路由在、参数形状需按平台真实号对齐）；save 的 token 路径按常见返回预填，第一单真号跑通后如取不到 token，按真实响应改 save 即可。",
+  "base": "https://hailuoai.com",
+  "project": "REPLACE_WITH_SMS_PROJECT_ID",
+  "steps": [
+    {
+      "name": "取号",
+      "type": "sms-get",
+      "project": "REPLACE_WITH_SMS_PROJECT_ID",
+      "save_phone": "phone",
+      "save_id": "phone_id"
+    },
+    {
+      "name": "发短信验证码",
+      "type": "http",
+      "method": "POST",
+      "path": "/v1/api/user/login/sms/send",
+      "sign": "hailuo",
+      "body": {
+        "phone": "{{phone}}"
+      },
+      "expect": 200
+    },
+    {
+      "name": "等短信",
+      "type": "sleep",
+      "ms": 4000
+    },
+    {
+      "name": "收验证码",
+      "type": "sms-wait",
+      "from": "phone_id",
+      "save": "code"
+    },
+    {
+      "name": "手机号登录（首次即注册）",
+      "type": "http",
+      "method": "POST",
+      "path": "/v1/api/user/login/phone",
+      "sign": "hailuo",
+      "body": {
+        "phone": "{{phone}}",
+        "code": "{{code}}"
+      },
+      "save": {
+        "token": "data.token",
+        "label": "data.userID"
+      },
+      "expect": 200
+    },
+    {
+      "name": "整理账号",
+      "type": "emit",
+      "as": {
+        "token": "{{token}}",
+        "label": "reg-{{phone}}"
+      }
+    }
+  ]
+}

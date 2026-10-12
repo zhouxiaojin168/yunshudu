@@ -37,6 +37,9 @@
  *   用法：node scripts/pool-supply.js [--once]
  */
 'use strict';
+/* 海螺网页端请求签名器（工作流步骤 step.sign==='hailuo' 时使用）*/
+let hailuoSign = null;
+try { hailuoSign = require('./hailuo-sign.js'); } catch (e) { hailuoSign = null; }
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -267,17 +270,29 @@ async function runRegisterFlow() {
       vars.account = Object.assign(vars.account || {}, out);
       continue;
     }
-    // http 步骤
+    // http 步骤（step.sign === 'hailuo' 时走海螺网页端签名：query 公共参数 + header.yy）
     const method = String(step.method || 'POST').toUpperCase();
-    const headers = Object.assign({ 'content-type': 'application/json' }, fillDeep(step.headers || {}, vars));
-    const init = { method: method, headers: headers };
-    if (method !== 'GET' && method !== 'HEAD') init.body = JSON.stringify(fillDeep(step.body || {}, vars));
     let url = fill(String(step.path || ''), vars);
-    if (!/^https?:/.test(url)) url = base + (url.charAt(0) === '/' ? url : '/' + url);
-    if (method === 'GET' && step.query) {
-      const q = new URLSearchParams(fillDeep(step.query, vars)).toString();
-      url += (url.indexOf('?') >= 0 ? '&' : '?') + q;
+    const bodyObj = fillDeep(step.body || {}, vars);
+    let headers = Object.assign({ 'content-type': 'application/json' }, fillDeep(step.headers || {}, vars));
+    let bodyStr = null;
+    if (step.sign === 'hailuo') {
+      if (!hailuoSign) throw new Error("step 需要 hailuo 签名，但 scripts/hailuo-sign.js 加载失败");
+      const built = hailuoSign.buildSignedRequest({ url: url, method: method, body: bodyObj, raw: String(vars.token || ''), lang: step.lang, time: Date.now() });
+      headers = Object.assign(headers, built.headers, fillDeep(step.headers || {}, vars));
+      try { const o = new URL(base).origin; headers.origin = o; headers.referer = o + '/'; } catch (e) {}
+      bodyStr = built.bodyString;
+      url = base + built.url;
+    } else {
+      if (!/^https?:/.test(url)) url = base + (url.charAt(0) === '/' ? url : '/' + url);
+      if (method !== 'GET' && method !== 'HEAD') bodyStr = JSON.stringify(bodyObj);
+      if (method === 'GET' && step.query) {
+        const q = new URLSearchParams(fillDeep(step.query, vars)).toString();
+        url += (url.indexOf('?') >= 0 ? '&' : '?') + q;
+      }
     }
+    const init = { method: method, headers: headers };
+    if (bodyStr != null && method !== 'GET' && method !== 'HEAD') init.body = bodyStr;
     const r = await fetch(url, init);
     const txt = await r.text();
     let j = null; try { j = JSON.parse(txt); } catch (e) {}

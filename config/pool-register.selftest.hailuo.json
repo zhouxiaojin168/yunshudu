@@ -1,0 +1,29 @@
+{
+  "_note": "自测：验证 pool-supply 的 step.sign='hailuo' 签名通路（打真站 hailuoai.video 的免风控接口 /v1/api/user/device/register）。本文件只用于本地自测，不进生产工作流。",
+  "base": "https://hailuoai.video",
+  "steps": [
+    {
+      "name": "设备注册",
+      "type": "http",
+      "method": "POST",
+      "path": "/v1/api/user/device/register",
+      "sign": "hailuo",
+      "body": {
+        "uuid": "5f2a1b3c-1111-2222-3333-444455556666"
+      },
+      "expect": 200,
+      "save": {
+        "token": "data.deviceIDStr",
+        "label": "data.deviceIDStr"
+      }
+    },
+    {
+      "name": "整理账号",
+      "type": "emit",
+      "as": {
+        "token": "{{token}}",
+        "label": "selftest-{{label}}"
+      }
+    }
+  ]
+}

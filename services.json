@@ -220,7 +220,7 @@
         "SUPP_POOL_MIN": "5",
         "SUPP_POOL_MAX": "200",
         "SUPP_FARM_FILE": "C:\\yunshudu\\data\\farm-accounts.jsonl",
-        "SUPP_REGISTER_FILE": "C:\\yunshudu\\app\\config\\pool-register.json",
+        "SUPP_REGISTER_FILE": "C:\\yunshudu\\app\\config\\pool-register.hailuo-cn.json",
         "SUPP_STATE_FILE": "C:\\yunshudu\\state\\pool-supply.json",
         "SUPP_LOG_FILE": "C:\\yunshudu\\logs\\pool-supply.log",
         "SUPP_MAIL_API": "http://127.0.0.1:8099",
@@ -230,7 +230,10 @@
       "envFrom": {
         "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY",
         "SUPP_ADMIN_KEY": "H3P_ADMIN_KEY",
-        "SUPP_MAIL_KEY": "MAILFARM_API_KEY"
+        "SUPP_MAIL_KEY": "MAILFARM_API_KEY",
+        "SUPP_SMS_GET": "SUPP_SMS_GET",
+        "SUPP_SMS_POLL": "SUPP_SMS_POLL",
+        "SUPP_SMS_KEY": "SUPP_SMS_KEY"
       },
       "health": {
         "kind": "http",
@@ -240,7 +243,7 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。 已接入 mailfarm 邮箱补号（type=mail-acquire/mail-wait，见 config/pool-register.mailfarm.json）：邮箱制上游可零短信成本开号。",
+      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。已接好三件：①mailfarm 邮箱补号 ②海螺签名工作流（config/pool-register.hailuo-cn.json，国内站手机号+短信，step.sign=hailuo 自动签名）③接码平台（SUPP_SMS_* 从 secrets.txt 注入）。海外站 hailuoai.video 网页只有 Google/Apple 登录，不能用接码；国内站 hailuoai.com 网页是手机号+短信。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
