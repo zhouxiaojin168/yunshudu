@@ -183,7 +183,12 @@
         "H3P_DAILY_CREDITS": "300",
         "H3P_ADAPTER_FILE": "C:\\yunshudu\\app\\config\\pool-adapter.hailuo-multi.json",
         "H3P_PENDING_TIMEOUT_MS": "300000",
-        "H3P_POLL_MS": "5000"
+        "H3P_POLL_MS": "5000",
+        "H3P_DEWATERMARK": "1",
+        "H3P_BIND": "0.0.0.0",
+        "H3P_MEDIA_BASE": "http://114.66.16.225:9940/media",
+        "H3P_MEDIA_DIR": "C:\\yunshudu\\data\\media",
+        "H3P_EXPIRY_WARN_H": "12"
       },
       "envFrom": {
         "H3P_ADMIN_KEY": "H3P_ADMIN_KEY"
@@ -218,7 +223,7 @@
       "env": {
         "SUPP_PORT": "9950",
         "SUPP_POOL_API": "http://127.0.0.1:9940",
-        "SUPP_POOL_MIN": "3",
+        "SUPP_POOL_MIN": "1",
         "SUPP_POOL_MAX": "200",
         "SUPP_FARM_FILE": "C:\\yunshudu\\data\\farm-accounts.jsonl",
         "SUPP_REGISTER_FILE": "C:\\yunshudu\\app\\config\\pool-register.hailuo-cn.json",

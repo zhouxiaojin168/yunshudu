@@ -146,7 +146,12 @@
         "list_path": "data.feeds",
         "id_path": "commonInfo.id",
         "status_path": "commonInfo.status",
-        "url_path": "metaInfo.imageMetaInfo.mediaInfo.url",
+        "url_path": [
+          "metaInfo.imageMetaInfo.mediaInfo.downloadURL.aiWatermarkURL",
+          "metaInfo.imageMetaInfo.mediaInfo.downloadURL.hailuoWatermarkURL",
+          "metaInfo.imageMetaInfo.mediaInfo.downloadURL.watermarkURL",
+          "metaInfo.imageMetaInfo.mediaInfo.url"
+        ],
         "cover_path": "feedCoverInfo.coverURL"
       }
     }

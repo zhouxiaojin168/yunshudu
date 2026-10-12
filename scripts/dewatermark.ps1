@@ -5,16 +5,16 @@
   Only that box is touched; every other pixel is left as-is.
 
   Usage: powershell -NoProfile -ExecutionPolicy Bypass -File dewatermark.ps1 -In a.jpg -Out b.jpg
-  Optional: -X 0.815 -Y 0.848 -Y2 0.952 -Feather 0.55 -Bands 60
+  Optional: -X 0.74 -Y 0.855 -Y2 1.0 -Feather 0.15 -Bands 60
   Exit 0 on success, non-zero on failure.
 #>
 param(
   [Parameter(Mandatory=$true)][string]$In,
   [Parameter(Mandatory=$true)][string]$Out,
-  [double]$X = 0.815,
-  [double]$Y = 0.848,
-  [double]$Y2 = 0.952,
-  [double]$Feather = 0.55,
+  [double]$X = 0.74,
+  [double]$Y = 0.855,
+  [double]$Y2 = 1.0,
+  [double]$Feather = 0.15,
   [int]$Bands = 60
 )
 $ErrorActionPreference = 'Stop'

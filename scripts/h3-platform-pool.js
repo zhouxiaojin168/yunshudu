@@ -151,6 +151,21 @@ const cp = require('child_process');
 const MEDIA_DIR = process.env.H3P_MEDIA_DIR || path.join(ROOT, 'runtime', 'media');
 const DEWATERMARK = String(process.env.H3P_DEWATERMARK == null ? '1' : process.env.H3P_DEWATERMARK) !== '0';
 const MEDIA_BASE = String(process.env.H3P_MEDIA_BASE || ('http://127.0.0.1:' + PORT + '/media')).replace(/\/+$/, '');
+/* R140 到期预警：还剩多少小时弃号（新人礼 80 贝壳 ~3.8 天寿命） */
+const EXPIRY_WARN_H = Number(process.env.H3P_EXPIRY_WARN_H || 12);
+/* R140 监听地址：默认只本机；要让「去水印成品图」对外可访问时才用 H3P_BIND=0.0.0.0 */
+const BIND = String(process.env.H3P_BIND || '127.0.0.1');
+function expiryReport() {
+  const t = now();
+  const warn = [];
+  for (const a of listAccounts()) {
+    const exp = Number(a.expires_at || 0);
+    if (!(exp > 0)) continue;
+    const hours = Math.round(((exp - t) / 3600000) * 100) / 100;
+    if (hours <= EXPIRY_WARN_H) warn.push({ id: a.id, label: a.label, credits: a.credits, expires_at: exp, hours_left: hours });
+  }
+  return { warn_hours: EXPIRY_WARN_H, expiring_soon: warn, soon_count: warn.length };
+}
 try { fs.mkdirSync(MEDIA_DIR, { recursive: true }); } catch (e) {}
 
 /* 把 aiWatermarkURL 下载下来 -> 用 System.Drawing 抹掉右下角标 -> 落到 runtime/media 由本服务托管 */
@@ -738,7 +753,7 @@ async function handle(req, res) {
   if (url.startsWith('/pool/')) {
     if (!isAdmin) return send(res, 401, { code: 'admin_required', message: '带上 x-admin-key' });
     if (req.method === 'GET' && url === '/pool/stats') {
-      return send(res, 200, { accounts: listAccounts(), inflight, max_inflight: MAX_INFLIGHT, auto_prune: { expired: AUTO_PRUNE_EXPIRED, zero: AUTO_PRUNE_ZERO },
+      return send(res, 200, { accounts: listAccounts().map(function (a) { return Object.assign({}, a, { hours_left: Number(a.expires_at || 0) > 0 ? Math.round(((Number(a.expires_at) - now()) / 3600000) * 100) / 100 : null }); }), expiry: expiryReport(), inflight, max_inflight: MAX_INFLIGHT, auto_prune: { expired: AUTO_PRUNE_EXPIRED, zero: AUTO_PRUNE_ZERO },
         config: { checkin_interval_ms: CHECKIN_MS, checkin_backoff_max_ms: CHECKIN_BACKOFF_MAX_MS, daily_credits: DAILY_CREDITS, reserve_factor: RESERVE_FACTOR, max_retries: MAX_RETRIES, credit_per_clip: CREDIT_PER_CLIP },
         checkin_state: Array.from(checkinState.entries()).map(([id, s]) => ({ id: id, no_gain: s.noGain, wait_ms: checkinWaitMs(id), last_attempt_at: s.lastAttemptAt })),
         audit: db.prepare('SELECT * FROM audit ORDER BY id DESC LIMIT 50').all() });
@@ -850,5 +865,5 @@ setInterval(async () => { if (checkinBusy) return; checkinBusy = true; try { awa
 
 setInterval(async () => { if (pollBusy) return; pollBusy = true; try { await pollPending(); } catch (e) {} finally { pollBusy = false; } }, Math.max(3000, Number(process.env.H3P_POLL_MS || 5000)));
 
-server.listen(PORT, '127.0.0.1', () => log('[h3-platform-pool] listening on 127.0.0.1:' + PORT + ' upstream=' + ADAPTER_BASE + ' (from ' + ADAPTER_BASE_SRC + ')' +
+server.listen(PORT, BIND, () => log('[h3-platform-pool] listening on ' + BIND + ':' + PORT + ' upstream=' + ADAPTER_BASE + ' (from ' + ADAPTER_BASE_SRC + ')' +
   ' checkin=' + CHECKIN_MS + 'ms daily=' + DAILY_CREDITS + ' reserve_x' + RESERVE_FACTOR + ' retries=' + MAX_RETRIES + ' inflight=' + MAX_INFLIGHT));
