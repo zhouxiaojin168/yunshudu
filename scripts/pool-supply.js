@@ -126,6 +126,7 @@ const poolAdd = (acct) => poolReq('POST', '/pool/accounts', acct);
 const poolBulk = (accounts) => poolReq('POST', '/pool/accounts/bulk', { accounts: accounts });
 const poolCheckin = () => poolReq('POST', '/pool/checkin', {});
 const poolRevive = () => poolReq('POST', '/pool/accounts/revive', {});
+const poolPrune = () => poolReq('POST', '/pool/accounts/prune', {});
 
 function healthyCount(st) {
   const arr = (st && st.json && st.json.accounts) || [];
@@ -333,6 +334,13 @@ async function guardRound(force) {
   const report = { at: new Date().toISOString(), pool: null, actions: [] };
   state.last_error = null;  // 新一轮开始就清掉上一轮的旧错，避免状态页骗人
   try {
+    /* R114(D)：每轮顺手清「0 额度」死号。海螺**没有每日签到**（实测 /v1/api/user/checkin、/task/list 等全 404），
+       额度是新人一次性礼；接码回收号拿到 0 额度后永远不可能自愈，留着只会撑爆 total、占 POOL_MAX 名额。 */
+    try {
+      const pr = await poolPrune();
+      const n = Number((pr.json && pr.json.removed) || 0);
+      if (n > 0) { report.actions.push('prune-' + n); log('清掉 ' + n + ' 个 0 额度死号'); }
+    } catch (e) { log('prune 失败: ' + e.message); }
     const st = await poolStats();
     const h = healthyCount(st);
     report.pool = { total: h.total, healthy: h.healthy, healthy_live: h.healthy_live, credits: Math.round(h.credits * 100) / 100 };

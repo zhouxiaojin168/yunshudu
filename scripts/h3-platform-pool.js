@@ -52,6 +52,7 @@ const RESERVE_FACTOR = Number(process.env.H3P_RESERVE_FACTOR || 2);
 const MAX_RETRIES = Number(process.env.H3P_MAX_RETRIES || 3);
 const MAX_INFLIGHT = Number(process.env.H3P_MAX_INFLIGHT || 20);
 const CREDIT_PER_CLIP = Number(process.env.H3P_CREDIT_PER_CLIP || 1000);
+const PENDING_TIMEOUT_MS = Number(process.env.H3P_PENDING_TIMEOUT_MS || 300000);   // R114：异步任务超时判失败+退额（默认 5 分钟）
 const LOGF = path.join(ROOT, 'runtime', 'logs', 'h3-platform-pool.log');
 
 /* 规格表：unit_credits 对齐文档口径（1000 credit/条视频；M3 只计次数不扣 credit；6 个工具一口价 0.002） */
@@ -113,6 +114,29 @@ const ADAPTER_BASE = String(process.env.H3P_UPSTREAM || (ADAPTER && ADAPTER.base
 const ADAPTER_BASE_SRC = process.env.H3P_UPSTREAM ? 'env:H3P_UPSTREAM' : ((ADAPTER && ADAPTER.base) ? 'json:' + ADAPTER_FILE : 'builtin');
 const ADAPTER_AUTH = (ADAPTER && ADAPTER.auth) || { type: 'body', field: 'token' };
 
+/* ---- R114：多站支持（一个池子里国内号/海外号并存）--------------------------------
+   适配器可选字段：
+     "sites": { "<标签>": { "base": "https://...", "models": { "<pool模型名>": {...} } } }
+     "default_site": "<标签>"     // token 第 4 段没写站标签时的缺省站
+   账号 token 形如 "token|uuid|device_id|site"；site 缺省=default_site。
+   客户端只认 pool 级模型名（MiniMax-Image 等），每站各自映射到真实 modelID。 */
+const SITES = (ADAPTER && ADAPTER.sites && typeof ADAPTER.sites === 'object') ? ADAPTER.sites : null;
+const DEFAULT_SITE = String((ADAPTER && ADAPTER.default_site) || (SITES ? (Object.keys(SITES)[0] || '') : ''));
+function siteOfToken(raw) {
+  const parts = String(raw == null ? '' : raw).split('|');
+  const tag = String(parts[3] || '').trim();
+  if (tag && SITES && SITES[tag]) return tag;
+  return DEFAULT_SITE;
+}
+function baseOfSite(site) {
+  const sc = SITES && SITES[site];
+  return String((sc && sc.base) || ADAPTER_BASE).replace(/\/+$/, '');
+}
+function modelsOf(site) {
+  const sc = SITES && SITES[site];
+  return (sc && sc.models) || (EP.task && EP.task.models) || null;
+}
+
 function dig(obj, p) {
   if (!p) return undefined;
   return String(p).split('.').reduce((o, k) => (o == null ? undefined : o[k]), obj);
@@ -168,7 +192,11 @@ async function upstream(name, fallbackPath, payload) {
   const init = { method: method, headers: signedReq ? signedReq.headers : headers };
   if (method !== 'GET' && method !== 'HEAD') init.body = signedReq ? signedReq.bodyString : JSON.stringify(body);
   let r;
-  try { r = await fetch(ADAPTER_BASE + (signedReq ? signedReq.url : pathname), init); }
+  try {
+    const _base = baseOfSite(siteOfToken(token));
+    if (signedReq) { try { const _o = new URL(_base).origin; signedReq.headers.origin = _o; signedReq.headers.referer = _o + '/'; } catch (e2) {} }
+    r = await fetch(_base + (signedReq ? signedReq.url : pathname), init);
+  }
   catch (err) {
     /* 上游不可达/地址没配好：返回 status 0，让调用方按 upstream_error 处理，绝不让进程崩 */
     return { status: 0, json: { error: 'upstream_unreachable', message: String(err && err.message || err) }, retry_after: 0,
@@ -307,7 +335,7 @@ async function runPoolTask(opts) {
   const tried = [];
   let lastErr = null;
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const need = opts.cost * RESERVE_FACTOR;      // 提交预占 + 结算实扣
+    const need = (Number(opts.maxCost) || opts.cost) * RESERVE_FACTOR;   // 提交预占 + 结算实扣（多站取最贵，防预占不足）
     const acct = pickAccount(need, tried);
     if (!acct) {
       const fat = fattestAvailable();
@@ -320,11 +348,21 @@ async function runPoolTask(opts) {
         message: 'waiting for credits (need ' + need + '; fattest account holds ' + fat + ')',
         detail: { need, fattest_holds: fat, accounts_healthy: listAccounts().filter((a) => a.healthy).length } };
     }
+    /* R114：按账号所在站解析上游模型；该站没有这个模型 -> 跳过该号换下一个（不要整个请求打死） */
+    const site = siteOfToken(acct.token);
+    const rp = opts.resolveParams ? opts.resolveParams(site) : { cost: opts.cost, params: opts.params || {} };
+    if (!rp) {
+      tried.push(acct.id);
+      lastErr = 'model_unsupported_on_site:' + site;
+      log('跳过账号 #' + acct.id + '：站 ' + site + ' 无模型 ' + opts.model);
+      continue;
+    }
+    const taskCost = Number(rp.cost) || opts.cost;
     tried.push(acct.id);
     hold(acct, need);
     let up;
     try {
-      up = await upstream('task', '/official/v2/task', Object.assign({ token: acct.token, model: opts.model, spec: opts.spec, cost: opts.cost }, opts.params || {}));
+      up = await upstream('task', '/official/v2/task', Object.assign({ token: acct.token, model: opts.model, spec: opts.spec, cost: taskCost }, rp.params || {}));
     } catch (e) {
       release(acct, need);
       return { ok: false, status: 502, code: 'upstream_error', message: String(e && e.message || e) };
@@ -555,11 +593,20 @@ async function handle(req, res) {
     const s = specOf(model);
     let cost = s.unit_credits;
     if (s.kind === 'chat') cost = 0;
-    /* 适配器给了 models 映射 -> 用上游真实单价与参数（海螺：modelID + resolution/aspectRatio/quality 的 valueStr） */
-    const mmap = (EP.task && EP.task.models) || null;
-    const mp = mmap && mmap[model] ? mmap[model] : null;
-    if (mp && mp.cost) cost = Number(mp.cost);
-    const taskParams = mp ? Object.assign({ prompt: String(body.prompt || body.desc || ''), quantity: Number(body.n || body.quantity || 1), limit: 20, __tpl: mp.body }, mp) : null;
+    /* 适配器给了 models 映射 -> 用上游真实单价与参数（海螺：modelID + resolution/aspectRatio/quality 的 valueStr）
+       R114：改为「按账号所在站」解析；每个站可以有不同 modelID（国内 all-in-one-image-pro / 海外 nano-banana2）。 */
+    const promptStr = String(body.prompt || body.desc || '');
+    const quantity = Number(body.n || body.quantity || 1);
+    const resolveParams = (site) => {
+      const mmap = modelsOf(site);
+      const mp = mmap && mmap[model] ? mmap[model] : null;
+      if (!mp) return null;
+      return { cost: Number(mp.cost) || cost, params: Object.assign({ prompt: promptStr, quantity: quantity, limit: 20, __tpl: mp.body }, mp) };
+    };
+    const siteCosts = (SITES ? Object.keys(SITES) : ['']).map((st) => { const rp = resolveParams(st); return rp ? rp.cost : 0; });
+    const maxCost = Math.max(cost, siteCosts.length ? Math.max.apply(null, siteCosts) : 0);
+    const eager = resolveParams(DEFAULT_SITE);
+    if (eager) cost = eager.cost;
     if (url === '/v1/audio/speech' && body.input) cost = Math.max(0.1, String(body.input).length * 0.1);
     const ch = chargeKey(a.key, cost);
     if (!ch.ok) return send(res, ch.err.status, ch.err);
@@ -570,7 +617,7 @@ async function handle(req, res) {
       if (s.kind === 'chat') {
         r = { ok: true, status: 200, account_id: null, account_label: '(M3 不扣 credit)', attempts: 0, upstream_task_id: null, result_url: null, text: 'mock: 这是平台池的 M3 文本回答（计入调用次数，不扣 credit）' };
       } else {
-        r = await runPoolTask({ model, spec: Object.assign({}, body), cost, apiKey: a.key.key, params: taskParams });
+        r = await runPoolTask({ model, spec: Object.assign({}, body), cost, maxCost, apiKey: a.key.key, resolveParams });
       }
     } finally { inflight -= 1; }
 
@@ -623,6 +670,15 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, id: r.id, token: r.token, label: r.label, credits: r.credits, probed: r.probed });
     }
     if (req.method === 'POST' && url === '/pool/accounts/revive') { return send(res, 200, Object.assign({ ok: true }, await reviveDead())); }
+    if (req.method === 'POST' && url === '/pool/accounts/delete') {
+      const id = Number(body.id);
+      if (!id) return send(res, 400, { ok: false, code: 'bad_id' });
+      const row = db.prepare('SELECT * FROM accounts WHERE id=?').get(id);
+      if (!row) return send(res, 404, { ok: false, code: 'not_found', id: id });
+      db.prepare('DELETE FROM accounts WHERE id=?').run(id);
+      log('删除账号 #' + id + ' ' + row.label);
+      return send(res, 200, { ok: true, removed: { id: id, label: row.label }, accounts: listAccounts() });
+    }
     if (req.method === 'POST' && url === '/pool/accounts/prune') {
       /* 清掉「0 额度」的死号：d1jiema 回收号没有新人礼、探出来就是 0，留着只会撑爆 total、占 POOL_MAX 名额。
          默认只删「健康且 0 额度」的（body.all=true 连不健康的一起删）。 */
@@ -667,6 +723,18 @@ async function pollPending() {
   const qcfg = EP.query.map || {};
   const rows = db.prepare("SELECT * FROM tasks WHERE status='pending' AND upstream_task_id IS NOT NULL ORDER BY updated_at DESC LIMIT 50").all();
   for (const t of rows) {
+    /* R114：超时兜底。上游若最终不产出 feed 项（生成彻底失败），任务会永远 pending -> 客户白等、key 被白扣。
+       超过 H3P_PENDING_TIMEOUT_MS 仍 pending：判 failed + 原路退回客户 key 的额度 + 取消自动销号。 */
+    if (now() - Number(t.created_at || 0) > PENDING_TIMEOUT_MS) {
+      db.prepare("UPDATE tasks SET status='failed', error='poll_timeout', updated_at=? WHERE id=?").run(now(), t.id);
+      const krow = db.prepare('SELECT * FROM api_keys WHERE key=?').get(t.api_key);
+      if (krow && !krow.unlimited) {
+        db.prepare('UPDATE api_keys SET credits=credits+?, calls=MAX(calls-1,0), revoked=0 WHERE key=?').run(Number(t.credits_cost || 0), krow.key);
+      }
+      audit(t.account_id, t.api_key, 'task_timeout', undefined, undefined, 'task=' + t.id + ' refunded=' + Number(t.credits_cost || 0));
+      log('任务超时判失败：' + t.id + '（> ' + PENDING_TIMEOUT_MS + 'ms），已退回 key 额度 ' + Number(t.credits_cost || 0));
+      continue;
+    }
     const acct = t.account_id ? getAccount(t.account_id) : null;
     if (!acct) { db.prepare("UPDATE tasks SET status='failed', error='account_missing', updated_at=? WHERE id=?").run(now(), t.id); continue; }
     const q = await upstream('query', '/api/feed/creation/search/my', { token: acct.token, limit: 20 });

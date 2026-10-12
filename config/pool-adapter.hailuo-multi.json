@@ -1,0 +1,232 @@
+{
+  "_note": "R114 多站适配器：同一个池子里国内号(hailuoai.com)与海外号(hailuoai.video)并存。账号 token 第 4 段是站标签：`token|uuid|device_id|site`，site ∈ {cn,intl}，缺省=default_site。客户端只认 pool 级模型名（MiniMax-Image 等），每站各自映射到真实 modelID。",
+  "_why": "国内站与海外站模型名不同（国内 all-in-one-image-pro / 海外 nano-banana2），且海外站只有 Google/Apple/Facebook(均 Firebase) 登录、无法用接码平台自动注册；国内站可全自动注册。两站共存才不会浪费既有海外号。",
+  "name": "hailuo-multi",
+  "default_site": "cn",
+  "base": "https://hailuoai.com",
+  "auth": {
+    "type": "hailuo_web"
+  },
+  "sites": {
+    "cn": {
+      "base": "https://hailuoai.com",
+      "models": {
+        "MiniMax-Image": {
+          "modelID": "all-in-one-image-pro",
+          "resolution": "1K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 6,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "all-in-one-image-pro",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "seedream-4.5": {
+          "modelID": "seedream-4.5",
+          "resolution": "2K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 4,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "seedream-4.5",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "gpt-image-1.5": {
+          "modelID": "gpt-image-1.5",
+          "resolution": "Medium",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 8,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "gpt-image-1.5",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "image-01": {
+          "modelID": "image-01",
+          "resolution": "1K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 1,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "image-01",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        }
+      }
+    },
+    "intl": {
+      "base": "https://hailuoai.video",
+      "models": {
+        "MiniMax-Image": {
+          "modelID": "nano-banana2",
+          "resolution": "1K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 6,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "nano-banana2",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "seedream-4.5": {
+          "modelID": "seedream-4.5",
+          "resolution": "2K",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 4,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "seedream-4.5",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        },
+        "gpt-image-1.5": {
+          "modelID": "gpt-image-1.5",
+          "resolution": "Medium",
+          "aspectRatio": "Auto",
+          "quality": "medium",
+          "cost": 8,
+          "body": {
+            "quantity": "{{n:quantity}}",
+            "parameter": {
+              "modelID": "gpt-image-1.5",
+              "desc": "{{prompt}}",
+              "fileList": [],
+              "useOriginPrompt": true,
+              "aspectRatio": "{{aspectRatio}}",
+              "resolution": "{{resolution}}",
+              "quality": "{{quality}}",
+              "referenceMode": ""
+            },
+            "projectID": "0"
+          }
+        }
+      }
+    }
+  },
+  "endpoints": {
+    "wallet": {
+      "method": "GET",
+      "path": "/v1/api/billing/credit",
+      "map": {
+        "credits": "data.total_credit"
+      }
+    },
+    "checkin": {
+      "method": "GET",
+      "path": "/v1/api/billing/credit",
+      "map": {
+        "credits_before": "data.total_credit",
+        "credits_after": "data.total_credit"
+      }
+    },
+    "task": {
+      "method": "POST",
+      "path": "/v2/api/multimodal/generate/image",
+      "async": true,
+      "body": {
+        "quantity": "{{n:quantity}}",
+        "parameter": {
+          "modelID": "all-in-one-image-pro",
+          "desc": "{{prompt}}",
+          "fileList": [],
+          "useOriginPrompt": true,
+          "aspectRatio": "{{aspectRatio}}",
+          "resolution": "{{resolution}}",
+          "quality": "{{quality}}",
+          "referenceMode": ""
+        },
+        "projectID": "0"
+      },
+      "map": {
+        "task_id": "data.id"
+      }
+    },
+    "query": {
+      "method": "POST",
+      "path": "/api/feed/creation/search/my",
+      "body": {
+        "cursor": "",
+        "limit": "{{n:limit}}"
+      },
+      "map": {
+        "list_path": "data.feeds",
+        "id_path": "commonInfo.id",
+        "status_path": "commonInfo.status",
+        "url_path": "metaInfo.imageMetaInfo.mediaInfo.url",
+        "cover_path": "feedCoverInfo.coverURL"
+      }
+    }
+  },
+  "_verify": [
+    "★R113 生产实测(国内站 cn)：all-in-one-image-pro 1K/Auto/medium -> 200 code=0；池子端到端 33s 回填真图 URL。",
+    "★R88 生产实测(海外站 intl)：nano-banana2 -> 200 code=0，扣 6 credits。",
+    "★R114：/v1/api/task/list /user/sign_in /user/checkin 等签到类接口全部 404 -> 海螺无「每日签到领额度」；credit 是新人一次性礼。"
+  ],
+  "_http_notes": [
+    "★ resolution/aspectRatio/quality 必须是 valueStr 字符串（发数字会 HTTP 400 bind body failed）。",
+    "★ generate 返回 data.id 即任务号；结果在 POST /api/feed/creation/search/my 的 data.feeds[] 按 commonInfo.id 匹配，status 2=完成/6=失败/1=进行中。"
+  ]
+}
