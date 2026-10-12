@@ -1,5 +1,5 @@
 {
-  "_note": "乙路-国内站 hailuoai.com（build prod-zh-0.1.796/0.1.797） 网页端适配器（https://hailuoai.com）：签名=header token + header yy + 公共参数（scripts/hailuo-sign.js）。账号 token 形如 \"<_token>|<uuid>|<device_id>\"。",
+  "_note": "乙路-国内站 hailuoai.com（build prod-zh-0.1.796/0.1.797） 网页端适配器（https://hailuoai.com）：签名=header token + header yy + 公共参数（scripts/hailuo-sign.js）。账号 token 形如 \"<_token>|<uuid>|<device_id>\"。 R140: query.url_path -> array, prefers aiWatermarkURL (no bottom brand banner; only the small corner tag, which dewatermark.ps1 can erase).",
   "_verify": [
     "★R83 生产实测（真号 周孝金，80 贝壳）：同一签名器在国内站 7/7 HTTP 200 code=0。",
     "★国内站图片模型：image-01(1 credit) / **all-in-one-image-pro**(=海外 nano-banana2 同款，1K/2K=6、4K=10 credit，13 模型之一)。",
@@ -147,7 +147,13 @@
         "status_path": "commonInfo.status",
         "url_path": "metaInfo.imageMetaInfo.mediaInfo.url",
         "cover_path": "feedCoverInfo.coverURL"
-      }
+      },
+      "url_path": [
+        "metaInfo.imageMetaInfo.mediaInfo.downloadURL.aiWatermarkURL",
+        "metaInfo.imageMetaInfo.mediaInfo.downloadURL.hailuoWatermarkURL",
+        "metaInfo.imageMetaInfo.mediaInfo.downloadURL.watermarkURL",
+        "metaInfo.imageMetaInfo.mediaInfo.url"
+      ]
     }
   }
 }

@@ -141,6 +141,36 @@ const EP = (ADAPTER && ADAPTER.endpoints) || {};
 /* 优先级：H3P_UPSTREAM 环境变量（显式指定） > 适配器 JSON 的 base > 内置默认 */
 const ADAPTER_BASE = String(process.env.H3P_UPSTREAM || (ADAPTER && ADAPTER.base) || UPSTREAM).replace(/\/+$/, '');
 const ADAPTER_BASE_SRC = process.env.H3P_UPSTREAM ? 'env:H3P_UPSTREAM' : ((ADAPTER && ADAPTER.base) ? 'json:' + ADAPTER_FILE : 'builtin');
+
+/* R140 去水印：上游每张图都预渲染 3 个变体（见 feed.metaInfo.imageMetaInfo.mediaInfo.downloadURL）：
+     watermarkURL      = 底部大横幅 'Hailuo AI x MINIMAX' + 右下 'AI生成' 角标
+     aiWatermarkURL    = 只有右下 'AI生成' 角标（无品牌横幅）<- 默认用这个
+     hailuoWatermarkURL= 只有右下 'Hailuo AI x MINIMAX' 小标
+   适配器 url_path 改成数组即「按序取第一个非空」。角标可选本地抹除见 dewatermark()。 */
+const cp = require('child_process');
+const MEDIA_DIR = process.env.H3P_MEDIA_DIR || path.join(ROOT, 'runtime', 'media');
+const DEWATERMARK = String(process.env.H3P_DEWATERMARK == null ? '1' : process.env.H3P_DEWATERMARK) !== '0';
+const MEDIA_BASE = String(process.env.H3P_MEDIA_BASE || ('http://127.0.0.1:' + PORT + '/media')).replace(/\/+$/, '');
+try { fs.mkdirSync(MEDIA_DIR, { recursive: true }); } catch (e) {}
+
+/* 把 aiWatermarkURL 下载下来 -> 用 System.Drawing 抹掉右下角标 -> 落到 runtime/media 由本服务托管 */
+async function dewatermark(srcUrl, taskId) {
+  const rawPath = path.join(MEDIA_DIR, 'raw-' + taskId + '.jpg');
+  const outPath = path.join(MEDIA_DIR, taskId + '.jpg');
+  const r = await fetch(srcUrl, { signal: AbortSignal.timeout(60000) });
+  if (r.status !== 200) throw new Error('download HTTP ' + r.status);
+  fs.writeFileSync(rawPath, Buffer.from(await r.arrayBuffer()));
+  const ps = path.join(ROOT, 'scripts', 'dewatermark.ps1');
+  await new Promise(function (resolve, reject) {
+    const c = cp.spawn('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps, '-In', rawPath, '-Out', outPath], { windowsHide: true });
+    let e = '';
+    c.stderr.on('data', function (d) { e += d.toString(); });
+    c.on('error', reject);
+    c.on('close', function (code) { if (code === 0 && fs.existsSync(outPath)) resolve(); else reject(new Error('dewatermark.ps1 exit=' + code + ' ' + String(e).slice(0, 200))); });
+  });
+  try { fs.unlinkSync(rawPath); } catch (e) {}
+  return MEDIA_BASE + '/' + taskId + '.jpg';
+}
 const ADAPTER_AUTH = (ADAPTER && ADAPTER.auth) || { type: 'body', field: 'token' };
 
 /* ---- R114：多站支持（一个池子里国内号/海外号并存）--------------------------------
@@ -548,6 +578,16 @@ async function handle(req, res) {
   const isAdmin = String(req.headers['x-admin-key'] || body.admin_key || '') === ADMIN_KEY;
 
   if (req.method === 'GET' && url === '/healthz') return send(res, 200, { ok: true, pool: 'platform', inflight, max_inflight: MAX_INFLIGHT });
+  /* R140 去水印后的成品图托管 */
+  if (req.method === 'GET' && url.startsWith('/media/')) {
+    const _name = decodeURIComponent(url.slice('/media/'.length));
+    if (!/^[A-Za-z0-9._-]+$/.test(_name)) return send(res, 400, { code: 'bad_name' });
+    const _f = path.join(MEDIA_DIR, _name);
+    if (!fs.existsSync(_f)) return send(res, 404, { code: 'not_found' });
+    const _buf = fs.readFileSync(_f);
+    res.writeHead(200, { 'content-type': /\.png$/i.test(_name) ? 'image/png' : 'image/jpeg', 'content-length': _buf.length, 'cache-control': 'public, max-age=86400' });
+    return res.end(_buf);
+  }
   if (req.method === 'GET' && url === '/v1/models') return send(res, 200, { object: 'list', data: SPECS.map((s) => ({ id: s.model, object: 'model', owned_by: 'hlpool' })) });
   if (req.method === 'GET' && url.startsWith('/v1/models/')) {
     const id = decodeURIComponent(url.slice('/v1/models/'.length));
@@ -788,9 +828,17 @@ async function pollPending() {
     const hit = feeds.find((f) => String(dig(f, qcfg.id_path || 'commonInfo.id')) === String(t.upstream_task_id));
     if (!hit) { if (process.env.H3P_DEBUG_POLL) log('poll ' + t.id + ' 未命中(upid=' + t.upstream_task_id + ' feeds=' + feeds.length + ')'); continue; }
     const st = Number(dig(hit, qcfg.status_path || 'commonInfo.status'));
-    const url = dig(hit, qcfg.url_path || 'metaInfo.imageMetaInfo.mediaInfo.url');
+    /* R140: url_path 支持数组（按序取第一个非空），默认优先「无品牌横幅」的 aiWatermarkURL */
+    const _cands = [].concat(qcfg.url_path || 'metaInfo.imageMetaInfo.mediaInfo.url');
+    let url = '';
+    for (const _c of _cands) { const _v = dig(hit, _c); if (_v) { url = _v; break; } }
     if (st === 2 && url) {
-      db.prepare("UPDATE tasks SET status='succeeded', result_url=?, updated_at=? WHERE id=?").run(String(url), now(), t.id);
+      let finalUrl = String(url);
+      if (DEWATERMARK) {
+        try { const local = await dewatermark(String(url), t.id); if (local) finalUrl = local; }
+        catch (e) { log('去水印失败（回退上游原图）: ' + e.message); }
+      }
+      db.prepare("UPDATE tasks SET status='succeeded', result_url=?, updated_at=? WHERE id=?").run(finalUrl, now(), t.id);
       audit(acct.id, t.api_key, 'task_polled', undefined, undefined, 'task=' + t.id + ' url_ok');
     } else if (st === 6) {
       db.prepare("UPDATE tasks SET status='failed', error='upstream_failed', updated_at=? WHERE id=?").run(now(), t.id);
