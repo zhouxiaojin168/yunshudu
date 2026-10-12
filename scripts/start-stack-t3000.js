@@ -46,7 +46,7 @@ const PROCS = {
            SUPP_REGISTER_FILE: path.join(ROOT,'config','pool-register.mailfarm.json'),
            SUPP_STATE_FILE: path.join(STATE,'pool-supply.json'),
            SUPP_LOG_FILE: path.join(LOGD,'pool-supply.log'),
-           SUPP_POOL_MIN:'5', SUPP_POOL_MAX:'200', SUPP_REFILL_BATCH:'5',
+           SUPP_POOL_MIN: process.env.SUPP_POOL_MIN || '0', SUPP_POOL_MAX:'200', SUPP_REFILL_BATCH:'5',
            SUPP_INTERVAL_MS:'60000', SUPP_CHECKIN_EVERY:'20' },
     port: 9950, health: 'http://127.0.0.1:9950/healthz'
   },
