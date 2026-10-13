@@ -79,7 +79,21 @@ const CFG = {
   bridgeDomains: env('COMPAT_BRIDGE_DOMAINS', '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean),
   proxy: env('COMPAT_PROXY', ''),
   rand: env('COMPAT_RAND', MODE === 'tempmail' ? '1' : '0') === '1',
-  apiKey: env('COMPAT_API_KEY', '')
+  apiKey: env('COMPAT_API_KEY', ''),
+  /* R144q: 域 -> 固定收信邮箱（Cloudflare 转发落地），格式 domain=mailbox@host,domain2=... */
+  forwardMap: (function () {
+    const m = {};
+    env('COMPAT_FORWARD_MAP', '').split(',').forEach(function (pair) {
+      const i = pair.indexOf('=');
+      if (i <= 0) return;
+      const d = pair.slice(0, i).trim().toLowerCase();
+      const mb = pair.slice(i + 1).trim().toLowerCase();
+      if (d && mb) m[d] = mb;
+    });
+    return m;
+  })(),
+  /* R144q: 转发落地读信的上游基址（默认同 COMPAT_UPSTREAM；跨机时指向真正收信的 mailfarm） */
+  forwardBase: (env('COMPAT_FORWARD_BASE', '') || env('COMPAT_UPSTREAM', 'http://127.0.0.1:8099')).replace(/\/+$/, '')
 };
 
 /* ---------- 序号持久化（dola 语义：前缀+序号 001 起续编，重启不重号） ---------- */
@@ -190,6 +204,46 @@ function channelOf(domain) {
   if (CFG.tempmailDomains.indexOf(d) >= 0) return 'tempmail';
   return CFG.mode === 'mailfarm' ? 'mailfarm' : 'tempmail';
 }
+/* R144q: 该域是否已转发到固定邮箱 */
+function forwardOf(domain) {
+  const d = String(domain || '').toLowerCase();
+  return (CFG.forwardMap && CFG.forwardMap[d]) || '';
+}
+function fwdMatch(msg, target) {
+  const hay = [msg.to, msg.delivered_to, msg.rcpt].filter(Boolean).join(' ').toLowerCase();
+  if (!hay) return true;  /* 上游没给原始收件人 -> 不过滤，避免漏信 */
+  return hay.indexOf(String(target).toLowerCase()) >= 0;
+}
+async function fwdFetch(mailbox, limit) {
+  const r = await up('/v1/mailboxes/' + encodeURIComponent(mailbox) + '/messages?limit=' + (limit || 50), 'GET', null, CFG.forwardBase, CFG.upstreamKey);
+  return (r.json && r.json.messages) || [];
+}
+/* R144q: 转发落地读信（mailbox = 固定邮箱，按原始收件人 target 过滤） */
+async function handleForwardedRead(addr, mailbox, kind, q, res) {
+  const target = String(addr).toLowerCase();
+  const limit = Math.min(parseInt(q.get('limit') || '20', 10) || 20, 200);
+  const timeoutS = Math.min(parseInt(q.get('timeout') || '90', 10) || 90, 300);
+  const deadline = Date.now() + timeoutS * 1000;
+  try {
+    if (kind === 'code') {
+      for (;;) {
+        const all = await fwdFetch(mailbox, 50);
+        const mine = all.filter(function (m) { return fwdMatch(m, target); });
+        for (let i = mine.length - 1; i >= 0; i--) {
+          const c = (mine[i].codes && mine[i].codes[0]) || extractCode(mine[i].text || '') || extractCode(mine[i].subject || '');
+          if (c) return json(res, 200, { address: target, code: c, found: true, via: 'forward', mailbox: mailbox });
+        }
+        if (Date.now() >= deadline) return json(res, 200, { address: target, code: null, found: false, via: 'forward', mailbox: mailbox });
+        await new Promise(function (r2) { setTimeout(r2, 1000); });
+      }
+    }
+    const all = await fwdFetch(mailbox, limit);
+    const mine = all.filter(function (m) { return fwdMatch(m, target); });
+    return json(res, 200, { address: target, via: 'forward', mailbox: mailbox, count: mine.length, messages: mine.slice(-limit).reverse() });
+  } catch (e) {
+    return json(res, 502, { detail: 'forward upstream error: ' + e.message, mailbox: mailbox });
+  }
+}
 /* R144i: 读域健康度（过期即忽略，避免陈旧结论锁死通道） */
 function loadDomainHealth() {
   try {
@@ -275,7 +329,7 @@ const server = http.createServer(async function (req, res) {
   if (method === 'GET' && p === '/healthz') {
     return json(res, 200, {
       ok: true, service: 'mail-compat', version: '1.2.0', mode: CFG.mode, domains: CFG.domains, prefix: CFG.prefix,
-      channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, domain_health: loadDomainHealth(),
+      channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, forward_map: CFG.forwardMap, domain_health: loadDomainHealth(),
       port: CFG.port, next_serial: serial, rand: CFG.rand, upstream: CFG.mode === 'tempmail' ? CFG.tmBase : CFG.upstream,
       proxy: CFG.proxy ? 'enabled' : 'disabled', api_key: CFG.apiKey ? 'enabled' : 'disabled'
     });
@@ -308,7 +362,7 @@ const server = http.createServer(async function (req, res) {
 
   if (method === 'GET' && p === '/v1/channels') {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
-    return json(res, 200, { mode: CFG.mode, channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, domains: CFG.domains, health: loadDomainHealth() });
+    return json(res, 200, { mode: CFG.mode, channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, forward_map: CFG.forwardMap, domains: CFG.domains, health: loadDomainHealth() });
   }
 
   if (method === 'GET' && p === '/v2/domains') {
@@ -334,6 +388,8 @@ const server = http.createServer(async function (req, res) {
   if (m && method === 'GET') {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
     const addr = m[1], kind = m[2];
+    const _fx = forwardOf(addr.split('@')[1] || '');
+    if (_fx) return handleForwardedRead(addr, _fx, kind, q, res);
     const _ch = channelOf(addr.split('@')[1] || '');
     if (_ch !== 'tempmail') {
       const suffix = kind === 'code' ? ('?timeout=' + encodeURIComponent(q.get('timeout') || '90')) : ('?limit=' + encodeURIComponent(q.get('limit') || '5'));
@@ -350,6 +406,14 @@ const server = http.createServer(async function (req, res) {
     const addr = q.get('email') || '';
     const limit = parseInt(q.get('limit') || '5', 10) || 5;
     if (!addr) return json(res, 400, { detail: 'email required' });
+    const _fwd1 = forwardOf(addr.split('@')[1] || '');
+    if (_fwd1) {
+      try {
+        const all = await fwdFetch(_fwd1, 50);
+        const mine = all.filter(function (m) { return fwdMatch(m, addr); });
+        return json(res, 200, { mail_list: fromMailfarm(addr, mine.slice(-limit).reverse(), limit), email: addr, count: mine.length, via: 'forward', mailbox: _fwd1 });
+      } catch (e) { return json(res, 200, { mail_list: [], email: addr, detail: 'forward upstream error: ' + e.message }); }
+    }
     if (channelOf(addr.split('@')[1] || '') === 'tempmail') {
       try {
         const r = await tm('/api/mails?email=' + encodeURIComponent(addr) + '&limit=' + limit, 'GET');
@@ -370,6 +434,19 @@ const server = http.createServer(async function (req, res) {
     const addr = q.get('email') || '';
     const id = d[1];
     if (!addr) return json(res, 400, { detail: 'email required' });
+    const _fwd2 = forwardOf(addr.split('@')[1] || '');
+    if (_fwd2) {
+      try {
+        const all = await fwdFetch(_fwd2, 50);
+        const mine = all.filter(function (m) { return fwdMatch(m, addr); });
+        const idx = parseInt(id, 10);
+        const hit = mine[mine.length - (idx || 1)] || mine[mine.length - 1] || null;
+        if (!hit) return json(res, 200, { id: id, subject: '', text: '', code: null, found: false, via: 'forward' });
+        const text = hit.text || hit.preview || '';
+        const code = (hit.codes && hit.codes[0]) || extractCode(text) || extractCode(hit.subject || '');
+        return json(res, 200, { id: id, subject: hit.subject || '', text: text, html: '', from: hit.from || hit.sender || '', date: hit.received_at || '', code: code, found: !!code, via: 'forward' });
+      } catch (e) { return json(res, 200, { id: id, subject: '', text: '', code: null, detail: 'forward upstream error: ' + e.message }); }
+    }
     if (channelOf(addr.split('@')[1] || '') === 'tempmail') {
       try {
         const r = await tm('/api/mails/' + encodeURIComponent(id) + '?email=' + encodeURIComponent(addr), 'GET');

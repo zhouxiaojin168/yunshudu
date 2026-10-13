@@ -260,7 +260,7 @@ const store = {
     return out;
   },
 
-  deliver: function (rcpt, sender, subject, text) {
+  deliver: function (rcpt, sender, subject, text, extra) {
     const addr = String(rcpt || '').trim().toLowerCase();
     if (!addr) return false;
     const now = Date.now();
@@ -273,6 +273,8 @@ const store = {
     }
     const codes = extractCodes(subject, text, 5);
     const msg = { ts: Math.round(now / 1000), sender: sender || '', rcpt: addr, subject: subject || '', text: text || '', codes: codes };
+    if (extra && extra.to) msg.to = String(extra.to).toLowerCase();
+    if (extra && extra.delivered_to) msg.delivered_to = String(extra.delivered_to).toLowerCase();
     box.messages.push(msg);
     if (box.messages.length > CFG.maxMsgs) box.messages = box.messages.slice(-CFG.maxMsgs);
     this.receivedTotal++;
@@ -300,7 +302,7 @@ const store = {
     if (!box) return null;
     const k = Number(limit || 20);
     return box.messages.slice(-k).map(function (m) {
-      return { ts: m.ts, sender: m.sender, rcpt: m.rcpt, subject: m.subject, codes: m.codes, body_preview: String(m.text || '').slice(0, 500) };
+      return { ts: m.ts, sender: m.sender, rcpt: m.rcpt, to: m.to || '', delivered_to: m.delivered_to || '', subject: m.subject, codes: m.codes, body_preview: String(m.text || '').slice(0, 500) };
     });
   },
 
@@ -381,7 +383,9 @@ function parseMessage(raw) {
     });
   }
   const from = ((head.match(/^from:\s*(.*)$/im) || [])[1] || '').trim();
-  return { subject: subject, from: from, text: collectText(body) };
+  const toRaw = (head.match(/^to:\s*(.*)$/im) || [])[1] || '';
+  const dtoRaw = (head.match(/^(?:delivered-to|x-original-to|x-forwarded-to|x-cloudflare-.*?):\s*(.*)$/im) || [])[1] || '';
+  return { subject: subject, from: from, to: toRaw.trim().toLowerCase(), delivered_to: dtoRaw.trim().toLowerCase(), text: collectText(body) };
 }
 
 /* ----------------------------- SMTP 收信 ----------------------------- */
@@ -405,7 +409,7 @@ function startSmtp() {
         const m = parseMessage(raw.replace(/\n\.\./g, '\n.'));
         subj = m.subject;
         for (let i = 0; i < rcptTos.length; i++) {
-          if (store.deliver(rcptTos[i], mailFrom, m.subject, m.text)) okCount++;
+          if (store.deliver(rcptTos[i], mailFrom, m.subject, m.text, { to: m.to, delivered_to: m.delivered_to })) okCount++;
         }
       } catch (e) { log('WARN parse fail:', e.message); }
       log('smtp recv from=' + mailFrom + ' rcpt=' + rcptTos.join(',') + ' ok=' + okCount + ' subject=' + JSON.stringify(String(subj).slice(0, 60)));
@@ -566,7 +570,10 @@ const httpServer = http.createServer(function (req, res) {
       if (!text && b.html) text = stripTags(b.html);
       if (b.raw) { try { const mp = parseMessage(String(b.raw)); if (!subject) subject = mp.subject; if (!text) text = mp.text; } catch (e) { log('WARN ingest raw parse fail: ' + e.message); } }
       const to = b.to || b.rcpt || b.address || '';
-      const ok = store.deliver(to, b.from || b.sender || '', subject, text);
+      let _extra = null;
+      if (b.raw) { try { const _mp = parseMessage(String(b.raw)); _extra = { to: _mp.to, delivered_to: _mp.delivered_to }; } catch (e) { /* ignore */ } }
+      if (b.to_header) { _extra = _extra || {}; _extra.to = String(b.to_header).toLowerCase(); }
+      const ok = store.deliver(to, b.from || b.sender || '', subject, text, _extra);
       if (!ok) return json(res, 400, { detail: 'domain not served (add it to MF_DOMAINS)' });
       json(res, 200, { ok: true, address: String(to).toLowerCase(), codes: extractCodes(subject, text, 5) });
     });
