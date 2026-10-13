@@ -346,6 +346,46 @@
       "note": "IMAP 收信桥（零依赖）：把真实 IMAP 邮箱（Spacemail 等）包装成 mailfarm 同款 HTTP 契约，pool-supply 只要把 SUPP_MAIL_API 指到 http://127.0.0.1:8098 即可切换，注册流程零改动。只监听 127.0.0.1，不对外暴露。凭据走 secrets.txt（IMAP_BRIDGE_USER/PASS/API_KEY），不入库。未配凭据时 /healthz 仍返回 200，仅取码会报错。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "mail-compat",
+      "type": "node",
+      "task": "yunshudu-mail-compat",
+      "managed": "auto",
+      "port": 8100,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\mail-compat-server.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "mail-compat"
+      ],
+      "env": {
+        "COMPAT_MODE": "mailfarm",
+        "COMPAT_HOST": "127.0.0.1",
+        "COMPAT_PORT": "8100",
+        "COMPAT_DOMAINS": "allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby",
+        "COMPAT_PREFIX": "hl",
+        "COMPAT_UPSTREAM": "http://127.0.0.1:8099",
+        "COMPAT_STATE": "C:\\yunshudu\\state\\mail-compat.json"
+      },
+      "envFrom": {
+        "COMPAT_UPSTREAM_KEY": "MAILFARM_API_KEY",
+        "COMPAT_API_KEY": "MAIL_COMPAT_API_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8100/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "取号三件套适配层：把 mailfarm(8099)/imap-bridge(8098) 或 tempmail.plus 统一成 dola/tempmail.plus 同形接口（/v1/recipe 三件套 + /api/mails 列表/详情 + /v1/mailboxes/{a}/code），任何 dola 风格（含 H3 号厂 h3-register.js）注册机可零改动接入。COMPAT_MODE=mailfarm|tempmail 切换上游；tempmail 模式白嫖公共 API（出墙可配 COMPAT_PROXY）。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
   ],
   "restartOnDeployDoc": "restartOnDeploy=true: 每次部署都硬重启该服务（用于仓库内的 Node 脚本，保证新代码生效）。false/缺省: 仅当健康检查失败才重启。"

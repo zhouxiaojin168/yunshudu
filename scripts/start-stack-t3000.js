@@ -36,6 +36,13 @@ const PROCS = {
            MF_MAILBOX_TTL_S:'3600', MF_CODE_MAX_AGE_S:'900' },
     port: 8099, health: 'http://127.0.0.1:8099/healthz'
   },
+  'mail-compat': {
+    script: 'scripts\\mail-compat-server.js',
+    env: { COMPAT_MODE: process.env.COMPAT_MODE || 'mailfarm', COMPAT_HOST:'127.0.0.1', COMPAT_PORT:'8100',
+           COMPAT_DOMAINS: DOMAINS, COMPAT_PREFIX:'hl', COMPAT_UPSTREAM:'http://127.0.0.1:8099', COMPAT_UPSTREAM_KEY: MF_KEY,
+           COMPAT_STATE: path.join(STATE,'mail-compat.json'), COMPAT_API_KEY: process.env.COMPAT_API_KEY || '' },
+    port: 8100, health: 'http://127.0.0.1:8100/healthz'
+  },
   'h3-platform-pool': {
     script: 'scripts\\h3-platform-pool.js',
     env: { H3P_PORT:'9940', H3P_ADMIN_KEY: POOL_ADMIN,
