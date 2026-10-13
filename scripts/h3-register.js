@@ -57,6 +57,7 @@ function cfg(k, d) { if (Object.prototype.hasOwnProperty.call(FILE_CFG, k)) retu
 
 const C = {
   base: String(cfg('H3_BASE', 'https://hailuoai.video')).replace(/\/+$/, ''),
+  site: String(cfg('H3_SITE', 'intl')),
   appId: String(cfg('H3_APP_ID', '3001')),
   versionCode: String(cfg('H3_VERSION_CODE', '22203')),
   bizId: String(cfg('H3_BIZ_ID', '0')),
@@ -290,8 +291,10 @@ async function probe() {
 }
 
 async function runOne() {
+  /* R144b: 每个号独立设备指纹，避免整批号共用同一个 uuid 被风控串号 */
+  DEVICE_ID = uuid();
   const email = await acquireEmail();
-  log('1/5 取号 ' + email);
+  log('1/5 取号 ' + email + ' (uuid=' + DEVICE_ID + ')');
   log('2/5 人机校验 need_captcha ...');
   try { const nc = await needCaptcha(email); log('     needCaptcha=' + JSON.stringify(info(nc.json).message || '') + ' data=' + JSON.stringify((nc.json || {}).data)); } catch (e) { log('     need_captcha err ' + e.message); }
   log('3/5 发码 ' + C.sendPath);
@@ -318,7 +321,7 @@ async function runOne() {
       log('     equity: ' + JSON.stringify(credit));
     } catch (e) { log('     equity 查询失败 ' + e.message); }
   }
-  const rec = { email: email, code: code, token: token, cookieSet: (l.headers && l.headers['set-cookie']) || null, user: data, credit: credit, at: new Date().toISOString(), base: C.base };
+  const rec = { email: email, code: code, token: token, uuid: DEVICE_ID, device_id: '', site: C.site, cookieSet: (l.headers && l.headers['set-cookie']) || null, user: data, credit: credit, at: new Date().toISOString(), base: C.base };
   if (saveAccount(rec)) log('     已入库 ' + C.statePath + (token ? ' (token len=' + token.length + ')' : ' (无 token)'));
   return rec;
 }
