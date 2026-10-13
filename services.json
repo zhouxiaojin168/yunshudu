@@ -1,415 +1,400 @@
 {
-    "version":  1,
-    "root":  "C:\\yunshudu",
-    "note":  "服务器侧服务清单：post-deploy.ps1 读本文件逐个确保服务存活；run-service.ps1 按名字启动单个服务。health.kind 支持 http / tcp / file。",
-    "services":  [
-                     {
-                         "name":  "new-api",
-                         "type":  "exe",
-                         "task":  "yunshudu-new-api",
-                         "managed":  "external",
-                         "port":  3000,
-                         "critical":  true,
-                         "launcher":  "run-new-api.ps1",
-                         "launcherArgs":  [
-
-                                          ],
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:3000/api/status",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  15,
-                                        "intervalSec":  2
-                                    },
-                         "restartOnDeploy":  false,
-                         "restartOnDeployNote":  "二进制在仓库外，重启会丢内存态，只在健康检查失败时重启"
-                     },
-                     {
-                         "name":  "edge-proxy",
-                         "type":  "node",
-                         "task":  "yunshudu-edge",
-                         "managed":  "auto",
-                         "port":  8080,
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\edge-proxy.js",
-                         "scriptArgs":  [
-
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "edge-proxy"
-                                          ],
-                         "env":  {
-                                     "EDGE_PORT":  "80,8080",
-                                     "EDGE_HOST":  "0.0.0.0",
-                                     "EDGE_UPSTREAM":  "http://127.0.0.1:3000",
-                                     "EDGE_LOG_DIR":  "C:\\yunshudu\\logs",
-                                     "EDGE_RL_MAX":  "1200",
-                                     "EDGE_ACCESS_LOG":  "0",
-                                     "EDGE_ROUTES":  "/mailfarm=http://127.0.0.1:8099"
-                                 },
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:8080/__edge/health",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  10,
-                                        "intervalSec":  2
-                                    },
-                         "ports":  [
-                                       80,
-                                       8080
-                                   ],
-                         "note":  "机房公网 80 被透明截持（Apache 301 -\u003e 183.136.132.24），故同时听 8080；80 留待备案/解封。EDGE_RL_MAX=每IP每分钟上限（0=不限流）；EDGE_ACCESS_LOG=1 记录每条请求（默认只记慢请求和错误） 新增 EDGE_ROUTES：/mailfarm/* -\u003e 127.0.0.1:8099（mailfarm），这样 Cloudflare Email Worker 可直接 POST 到 \u003c隧道域名\u003e/mailfarm/v1/ingest，无需开新端口。",
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     },
-                     {
-                         "name":  "cloudflared",
-                         "type":  "exe",
-                         "task":  "yunshudu-tunnel",
-                         "managed":  "auto",
-                         "critical":  false,
-                         "script":  "bin\\cloudflared.exe",
-                         "scriptArgs":  [
-                                            "tunnel",
-                                            "--no-autoupdate",
-                                            "--metrics",
-                                            "127.0.0.1:29731",
-                                            "--url",
-                                            "http://127.0.0.1:8080"
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "cloudflared"
-                                          ],
-                         "note":  "免账号快速隧道 -\u003e 公网 HTTPS 域名，绕开机房 80 截持；URL 落 logs\\cloudflared.err.log，由 tunnel-watch 抓取",
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:29731/ready",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  15,
-                                        "intervalSec":  3
-                                    },
-                         "restartOnDeploy":  false,
-                         "restartOnDeployNote":  "重启会更换临时隧道域名，只在健康检查失败时重启"
-                     },
-                     {
-                         "name":  "tunnel-watch",
-                         "type":  "node",
-                         "task":  "yunshudu-tunnel-watch",
-                         "managed":  "auto",
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\tunnel-watch.js",
-                         "scriptArgs":  [
-
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "tunnel-watch"
-                                          ],
-                         "env":  {
-                                     "TW_ROOT":  "C:\\yunshudu",
-                                     "TW_LOG":  "C:\\yunshudu\\logs\\cloudflared.err.log",
-                                     "TW_STATE":  "C:\\yunshudu\\state\\tunnel-url.txt",
-                                     "TW_API":  "http://127.0.0.1:3000",
-                                     "TW_INTERVAL":  "20"
-                                 },
-                         "note":  "每 20s 扫 cloudflared 日志抓临时域名 -\u003e 写 state\\tunnel-url.txt + 同步站点 ServerAddress（密码从 secrets.txt 的 ADMIN_PASSWORD 读，不入库）",
-                         "health":  {
-                                        "kind":  "file",
-                                        "path":  "C:\\yunshudu\\state\\tunnel-url.txt",
-                                        "maxAgeSec":  300,
-                                        "retries":  10,
-                                        "intervalSec":  3
-                                    },
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     },
-                     {
-                         "name":  "portal",
-                         "type":  "node",
-                         "task":  "yunshudu-portal",
-                         "managed":  "auto",
-                         "port":  8899,
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\serve-web.js",
-                         "scriptArgs":  [
-                                            "8899"
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "portal"
-                                          ],
-                         "env":  {
-                                     "WEB_PORT":  "8899",
-                                     "API_HOST":  "127.0.0.1",
-                                     "API_PORT":  "3000"
-                                 },
-                         "note":  "静态门户（web/）+ /api 反代到 new-api(3000)；无需上游 key，服务器自带一个可用的展示站",
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:8899/",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  10,
-                                        "intervalSec":  2
-                                    },
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     },
-                     {
-                         "name":  "h3-platform-pool",
-                         "type":  "node",
-                         "task":  "yunshudu-h3pool",
-                         "managed":  "auto",
-                         "port":  9940,
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\h3-platform-pool.js",
-                         "scriptArgs":  [
-
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "h3-platform-pool"
-                                          ],
-                         "env":  {
-                                     "H3P_PORT":  "9940",
-                                     "H3P_DB":  "C:\\yunshudu\\data\\h3pool.db",
-                                     "H3P_CHECKIN_MS":  "60000",
-                                     "H3P_DAILY_CREDITS":  "300",
-                                     "H3P_ADAPTER_FILE":  "C:\\yunshudu\\app\\config\\pool-adapter.hailuo-multi.json",
-                                     "H3P_PENDING_TIMEOUT_MS":  "300000",
-                                     "H3P_POLL_MS":  "5000",
-                                     "H3P_DEWATERMARK":  "1",
-                                     "H3P_BIND":  "0.0.0.0",
-                                     "H3P_MEDIA_BASE":  "http://114.66.16.225:9940/media",
-                                     "H3P_MEDIA_DIR":  "C:\\yunshudu\\data\\media",
-                                     "H3P_EXPIRY_WARN_H":  "12"
-                                 },
-                         "envFrom":  {
-                                         "H3P_ADMIN_KEY":  "H3P_ADMIN_KEY"
-                                     },
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:9940/healthz",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  10,
-                                        "intervalSec":  2
-                                    },
-                         "note":  "账号池引擎（服务端账号池）：N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。上游接口全在 config/pool-adapter.\u003cx\u003e.json 里（base/path/auth/map/body 模板/models 参数映射），换上游不动代码；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。当前指向乙路-国内站 hailuoai.com（R113 起：接码平台手机号+短信可全自动注册，池子的号源即国内站；海外站 hailuoai.video 只能 Google/Apple 登录、无法自动补号，故仅保留适配器文件备用）。",
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     },
-                     {
-                         "name":  "pool-supply",
-                         "type":  "node",
-                         "task":  "yunshudu-pool-supply",
-                         "managed":  "auto",
-                         "port":  9950,
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\pool-supply.js",
-                         "scriptArgs":  [
-
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "pool-supply"
-                                          ],
-                         "env":  {
-                                     "SUPP_PORT":  "9950",
-                                     "SUPP_POOL_API":  "http://127.0.0.1:9940",
-                                     "SUPP_POOL_MIN":  "1",
-                                     "SUPP_POOL_MAX":  "200",
-                                     "SUPP_FARM_FILE":  "C:\\yunshudu\\data\\farm-accounts.jsonl",
-                                     "SUPP_REGISTER_FILE":  "C:\\yunshudu\\app\\config\\pool-register.hailuo-cn.json",
-                                     "SUPP_STATE_FILE":  "C:\\yunshudu\\state\\pool-supply.json",
-                                     "SUPP_LOG_FILE":  "C:\\yunshudu\\logs\\pool-supply.log",
-                                     "SUPP_MAIL_API":  "http://127.0.0.1:8099",
-                                     "SUPP_MAIL_PREFIX":  "hl",
-                                     "SUPP_MAIL_WAIT_MS":  "90000",
-                                     "SUPP_SMS_COST":  "0.4",
-                                     "SUPP_SMS_MAX_TRY":  "3",
-                                     "SUPP_SMS_LEDGER":  "C:\\yunshudu\\app\\state\\sms-ledger.json",
-                                     "SUPP_SMS_CARD_TYPE":  "全部",
-                                     "SUPP_SMS_BLOCK_SEGMENTS":  "",
-                                     "SUPP_SMS_PROVINCE":  ""
-                                 },
-                         "envFrom":  {
-                                         "SUPP_POOL_ADMIN_KEY":  "H3P_ADMIN_KEY",
-                                         "SUPP_ADMIN_KEY":  "H3P_ADMIN_KEY",
-                                         "SUPP_MAIL_KEY":  "MAILFARM_API_KEY",
-                                         "SUPP_SMS_GET":  "SUPP_SMS_GET",
-                                         "SUPP_SMS_POLL":  "SUPP_SMS_POLL",
-                                         "SUPP_SMS_KEY":  "SUPP_SMS_KEY"
-                                     },
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:9950/supply/healthz",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  10,
-                                        "intervalSec":  2
-                                    },
-                         "note":  "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。已接好三件：①mailfarm 邮箱补号 ②海螺签名工作流（config/pool-register.hailuo-cn.json，国内站手机号+短信，step.sign=hailuo 自动签名）③接码平台（SUPP_SMS_* 从 secrets.txt 注入）。海外站 hailuoai.video 网页只有 Google/Apple 登录，不能用接码；国内站 hailuoai.com 网页是手机号+短信。",
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     },
-                     {
-                         "name":  "mailfarm",
-                         "type":  "node",
-                         "task":  "yunshudu-mailfarm",
-                         "managed":  "auto",
-                         "port":  8099,
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\mailfarm-server.js",
-                         "scriptArgs":  [
-
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "mailfarm"
-                                          ],
-                         "env":  {
-                                     "MF_SERVICE_NAME":  "mailfarm",
-                                     "MF_DOMAINS":  "qingzhou.autos",
-                                     "MF_DOMAINS_NOTE_R144y":  "外来 5 域（jixuwz.com/allen23.online/lopwi.cyou/sghd.college/ytu.baby）已剔除：不属我方、公网 MX 在 45.207.214.211、H3 判 blocked。自有新域在 Cloudflare 配好收信后填回本字段。",
-                                     "MF_HTTP_HOST":  "0.0.0.0",
-                                     "MF_HTTP_PORT":  "8099",
-                                     "MF_SMTP_ENABLE":  "0",
-                                     "MF_MAILBOX_TTL_S":  "3600",
-                                     "MF_CODE_MAX_AGE_S":  "900",
-                                     "MF_STORE":  "file",
-                                     "MF_STATE_DIR":  "C:\\yunshudu\\state\\mailfarm",
-                                     "MF_SNAPSHOT_EVERY":  "500"
-                                 },
-                         "envFrom":  {
-                                         "MF_API_KEY":  "MAILFARM_API_KEY",
-                                         "MF_INGEST_KEY":  "MAILFARM_INGEST_KEY"
-                                     },
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:8099/healthz",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  10,
-                                        "intervalSec":  2
-                                    },
-                         "note":  "【R144y】外来 5 域已从 MF_DOMAINS 剔除，自有域默认 qingzhou.autos；新域用 scripts\\add-maildomain.js 接入。一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。**MF_STORE=file：状态落在 C:\\yunshudu\\state\\mailfarm\\mailfarm.jsonl（追加日志+快照压缩），部署重启/崩溃不再丢已发邮箱与已收验证码。**",
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     },
-                     {
-                         "name":  "imap-bridge",
-                         "type":  "node",
-                         "task":  "yunshudu-imap-bridge",
-                         "managed":  "auto",
-                         "port":  8098,
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\imap-mail-bridge.js",
-                         "scriptArgs":  [
-
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "imap-bridge"
-                                          ],
-                         "env":  {
-                                     "IMB_HOST":  "imap.gmail.com",
-                                     "IMB_PORT":  "993",
-                                     "IMB_TLS":  "1",
-                                     "IMB_TLS_INSECURE":  "0",
-                                     "IMB_DOMAIN":  "qingzhou.autos",
-                                     "IMB_PREFIX":  "hl",
-                                     "IMB_HTTP_HOST":  "127.0.0.1",
-                                     "IMB_HTTP_PORT":  "8098",
-                                     "IMB_POLL_MS":  "3000",
-                                     "IMB_LOOKBACK_H":  "24",
-                                     "IMB_MARK_SEEN":  "0"
-                                 },
-                         "envFrom":  {
-                                         "IMB_USER":  "IMAP_BRIDGE_USER",
-                                         "IMB_PASS":  "IMAP_BRIDGE_PASS",
-                                         "IMB_API_KEY":  "IMAP_BRIDGE_API_KEY"
-                                     },
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:8098/healthz",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  10,
-                                        "intervalSec":  2
-                                    },
-                         "note":  "IMAP 收信桥（零依赖）：把真实 IMAP 邮箱（Spacemail 等）包装成 mailfarm 同款 HTTP 契约，pool-supply 只要把 SUPP_MAIL_API 指到 http://127.0.0.1:8098 即可切换，注册流程零改动。只监听 127.0.0.1，不对外暴露。凭据走 secrets.txt（IMAP_BRIDGE_USER/PASS/API_KEY），不入库。未配凭据时 /healthz 仍返回 200，仅取码会报错。",
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     },
-                     {
-                         "name":  "mail-compat",
-                         "type":  "node",
-                         "task":  "yunshudu-mail-compat",
-                         "managed":  "auto",
-                         "port":  8100,
-                         "critical":  false,
-                         "node":  "node-v22.23.3\\node.exe",
-                         "script":  "app\\scripts\\mail-compat-server.js",
-                         "scriptArgs":  [
-
-                                        ],
-                         "launcher":  "app\\deploy\\run-service.ps1",
-                         "launcherArgs":  [
-                                              "-Name",
-                                              "mail-compat"
-                                          ],
-                         "env":  {
-                                     "COMPAT_MODE":  "dual",
-                                     "COMPAT_HOST":  "127.0.0.1",
-                                     "COMPAT_PORT":  "8100",
-                                     "COMPAT_DOMAINS":  "mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus,qingzhou.autos",
-                                     "COMPAT_FOREIGN_DENY_R144y":  "jixuwz.com,allen23.online,lopwi.cyou,sghd.college,ytu.baby",
-                                     "COMPAT_PREFIX":  "hl",
-                                     "COMPAT_UPSTREAM":  "http://127.0.0.1:8099",
-                                     "COMPAT_BRIDGE":  "http://127.0.0.1:8098",
-                                     "COMPAT_BRIDGE_DOMAINS":  "",
-                                     "COMPAT_HEALTH_FILE":  "C:\\yunshudu\\state\\mail-domain-health.json",
-                                     "COMPAT_HEALTH_MAX_AGE":  "86400",
-                                     "COMPAT_STATE":  "C:\\yunshudu\\state\\mail-compat.json"
-                                 },
-                         "envFrom":  {
-                                         "COMPAT_UPSTREAM_KEY":  "MAILFARM_API_KEY",
-                                         "COMPAT_BRIDGE_KEY":  "IMAP_BRIDGE_API_KEY",
-                                         "COMPAT_API_KEY":  "MAIL_COMPAT_API_KEY"
-                                     },
-                         "health":  {
-                                        "kind":  "http",
-                                        "url":  "http://127.0.0.1:8100/healthz",
-                                        "expect":  200,
-                                        "timeoutSec":  5,
-                                        "retries":  10,
-                                        "intervalSec":  2
-                                    },
-                         "note":  "取号三件套适配层：把 mailfarm(8099)/imap-bridge(8098) 或 tempmail.plus 统一成 dola/tempmail.plus 同形接口（/v1/recipe 三件套 + /api/mails 列表/详情 + /v1/mailboxes/{a}/code），任何 dola 风格（含 H3 号厂 h3-register.js）注册机可零改动接入。COMPAT_MODE=mailfarm|tempmail 切换上游；tempmail 模式白嫖公共 API（出墙可配 COMPAT_PROXY）。",
-                         "restartOnDeploy":  true,
-                         "restartOnDeployNote":  "仓库内脚本变更后必须重启才能生效"
-                     }
-                 ],
-    "restartOnDeployDoc":  "restartOnDeploy=true: 每次部署都硬重启该服务（用于仓库内的 Node 脚本，保证新代码生效）。false/缺省: 仅当健康检查失败才重启。"
+  "version": 1,
+  "root": "C:\\yunshudu",
+  "note": "服务器侧服务清单：post-deploy.ps1 读本文件逐个确保服务存活；run-service.ps1 按名字启动单个服务。health.kind 支持 http / tcp / file。",
+  "services": [
+    {
+      "name": "new-api",
+      "type": "exe",
+      "task": "yunshudu-new-api",
+      "managed": "external",
+      "port": 3000,
+      "critical": true,
+      "launcher": "run-new-api.ps1",
+      "launcherArgs": [],
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:3000/api/status",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 15,
+        "intervalSec": 2
+      },
+      "restartOnDeploy": false,
+      "restartOnDeployNote": "二进制在仓库外，重启会丢内存态，只在健康检查失败时重启"
+    },
+    {
+      "name": "edge-proxy",
+      "type": "node",
+      "task": "yunshudu-edge",
+      "managed": "auto",
+      "port": 8080,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\edge-proxy.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "edge-proxy"
+      ],
+      "env": {
+        "EDGE_PORT": "80,8080",
+        "EDGE_HOST": "0.0.0.0",
+        "EDGE_UPSTREAM": "http://127.0.0.1:3000",
+        "EDGE_LOG_DIR": "C:\\yunshudu\\logs",
+        "EDGE_RL_MAX": "1200",
+        "EDGE_ACCESS_LOG": "0",
+        "EDGE_ROUTES": "/mailfarm=http://127.0.0.1:8099"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8080/__edge/health",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "ports": [
+        80,
+        8080
+      ],
+      "note": "机房公网 80 被透明截持（Apache 301 -> 183.136.132.24），故同时听 8080；80 留待备案/解封。EDGE_RL_MAX=每IP每分钟上限（0=不限流）；EDGE_ACCESS_LOG=1 记录每条请求（默认只记慢请求和错误） 新增 EDGE_ROUTES：/mailfarm/* -> 127.0.0.1:8099（mailfarm），这样 Cloudflare Email Worker 可直接 POST 到 <隧道域名>/mailfarm/v1/ingest，无需开新端口。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "cloudflared",
+      "type": "exe",
+      "task": "yunshudu-tunnel",
+      "managed": "auto",
+      "critical": false,
+      "script": "bin\\cloudflared.exe",
+      "scriptArgs": [
+        "tunnel",
+        "--no-autoupdate",
+        "--metrics",
+        "127.0.0.1:29731",
+        "--url",
+        "http://127.0.0.1:8080"
+      ],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "cloudflared"
+      ],
+      "note": "免账号快速隧道 -> 公网 HTTPS 域名，绕开机房 80 截持；URL 落 logs\\cloudflared.err.log，由 tunnel-watch 抓取",
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:29731/ready",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 15,
+        "intervalSec": 3
+      },
+      "restartOnDeploy": false,
+      "restartOnDeployNote": "重启会更换临时隧道域名，只在健康检查失败时重启"
+    },
+    {
+      "name": "tunnel-watch",
+      "type": "node",
+      "task": "yunshudu-tunnel-watch",
+      "managed": "auto",
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\tunnel-watch.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "tunnel-watch"
+      ],
+      "env": {
+        "TW_ROOT": "C:\\yunshudu",
+        "TW_LOG": "C:\\yunshudu\\logs\\cloudflared.err.log",
+        "TW_STATE": "C:\\yunshudu\\state\\tunnel-url.txt",
+        "TW_API": "http://127.0.0.1:3000",
+        "TW_INTERVAL": "20"
+      },
+      "note": "每 20s 扫 cloudflared 日志抓临时域名 -> 写 state\\tunnel-url.txt + 同步站点 ServerAddress（密码从 secrets.txt 的 ADMIN_PASSWORD 读，不入库）",
+      "health": {
+        "kind": "file",
+        "path": "C:\\yunshudu\\state\\tunnel-url.txt",
+        "maxAgeSec": 300,
+        "retries": 10,
+        "intervalSec": 3
+      },
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "portal",
+      "type": "node",
+      "task": "yunshudu-portal",
+      "managed": "auto",
+      "port": 8899,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\serve-web.js",
+      "scriptArgs": [
+        "8899"
+      ],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "portal"
+      ],
+      "env": {
+        "WEB_PORT": "8899",
+        "API_HOST": "127.0.0.1",
+        "API_PORT": "3000"
+      },
+      "note": "静态门户（web/）+ /api 反代到 new-api(3000)；无需上游 key，服务器自带一个可用的展示站",
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8899/",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "h3-platform-pool",
+      "type": "node",
+      "task": "yunshudu-h3pool",
+      "managed": "auto",
+      "port": 9940,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\h3-platform-pool.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "h3-platform-pool"
+      ],
+      "env": {
+        "H3P_PORT": "9940",
+        "H3P_DB": "C:\\yunshudu\\data\\h3pool.db",
+        "H3P_CHECKIN_MS": "60000",
+        "H3P_DAILY_CREDITS": "300",
+        "H3P_ADAPTER_FILE": "C:\\yunshudu\\app\\config\\pool-adapter.hailuo-multi.json",
+        "H3P_PENDING_TIMEOUT_MS": "300000",
+        "H3P_POLL_MS": "5000",
+        "H3P_DEWATERMARK": "1",
+        "H3P_BIND": "0.0.0.0",
+        "H3P_MEDIA_BASE": "http://114.66.16.225:9940/media",
+        "H3P_MEDIA_DIR": "C:\\yunshudu\\data\\media",
+        "H3P_EXPIRY_WARN_H": "12"
+      },
+      "envFrom": {
+        "H3P_ADMIN_KEY": "H3P_ADMIN_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:9940/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "账号池引擎（服务端账号池）：N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。上游接口全在 config/pool-adapter.<x>.json 里（base/path/auth/map/body 模板/models 参数映射），换上游不动代码；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。当前指向乙路-国内站 hailuoai.com（R113 起：接码平台手机号+短信可全自动注册，池子的号源即国内站；海外站 hailuoai.video 只能 Google/Apple 登录、无法自动补号，故仅保留适配器文件备用）。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "pool-supply",
+      "type": "node",
+      "task": "yunshudu-pool-supply",
+      "managed": "auto",
+      "port": 9950,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\pool-supply.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "pool-supply"
+      ],
+      "env": {
+        "SUPP_PORT": "9950",
+        "SUPP_POOL_API": "http://127.0.0.1:9940",
+        "SUPP_POOL_MIN": "1",
+        "SUPP_POOL_MAX": "200",
+        "SUPP_FARM_FILE": "C:\\yunshudu\\data\\farm-accounts.jsonl",
+        "SUPP_REGISTER_FILE": "C:\\yunshudu\\app\\config\\pool-register.hailuo-cn.json",
+        "SUPP_STATE_FILE": "C:\\yunshudu\\state\\pool-supply.json",
+        "SUPP_LOG_FILE": "C:\\yunshudu\\logs\\pool-supply.log",
+        "SUPP_MAIL_API": "http://127.0.0.1:8099",
+        "SUPP_MAIL_PREFIX": "hl",
+        "SUPP_MAIL_WAIT_MS": "90000",
+        "SUPP_SMS_COST": "0.4",
+        "SUPP_SMS_MAX_TRY": "3",
+        "SUPP_SMS_LEDGER": "C:\\yunshudu\\app\\state\\sms-ledger.json",
+        "SUPP_SMS_CARD_TYPE": "全部",
+        "SUPP_SMS_BLOCK_SEGMENTS": "",
+        "SUPP_SMS_PROVINCE": ""
+      },
+      "envFrom": {
+        "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY",
+        "SUPP_ADMIN_KEY": "H3P_ADMIN_KEY",
+        "SUPP_MAIL_KEY": "MAILFARM_API_KEY",
+        "SUPP_SMS_GET": "SUPP_SMS_GET",
+        "SUPP_SMS_POLL": "SUPP_SMS_POLL",
+        "SUPP_SMS_KEY": "SUPP_SMS_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:9950/supply/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。已接好三件：①mailfarm 邮箱补号 ②海螺签名工作流（config/pool-register.hailuo-cn.json，国内站手机号+短信，step.sign=hailuo 自动签名）③接码平台（SUPP_SMS_* 从 secrets.txt 注入）。海外站 hailuoai.video 网页只有 Google/Apple 登录，不能用接码；国内站 hailuoai.com 网页是手机号+短信。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "mailfarm",
+      "type": "node",
+      "task": "yunshudu-mailfarm",
+      "managed": "auto",
+      "port": 8099,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\mailfarm-server.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "mailfarm"
+      ],
+      "env": {
+        "MF_SERVICE_NAME": "mailfarm",
+        "MF_DOMAINS": "qingzhou.autos",
+        "MF_DOMAINS_NOTE_R144y": "外来 5 域（jixuwz.com/allen23.online/lopwi.cyou/sghd.college/ytu.baby）已剔除：不属我方、公网 MX 在 45.207.214.211、H3 判 blocked。自有新域在 Cloudflare 配好收信后填回本字段。",
+        "MF_HTTP_HOST": "0.0.0.0",
+        "MF_HTTP_PORT": "8099",
+        "MF_SMTP_ENABLE": "0",
+        "MF_MAILBOX_TTL_S": "3600",
+        "MF_CODE_MAX_AGE_S": "900",
+        "MF_STORE": "file",
+        "MF_STATE_DIR": "C:\\yunshudu\\state\\mailfarm",
+        "MF_SNAPSHOT_EVERY": "500"
+      },
+      "envFrom": {
+        "MF_API_KEY": "MAILFARM_API_KEY",
+        "MF_INGEST_KEY": "MAILFARM_INGEST_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8099/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "【R144y】外来 5 域已从 MF_DOMAINS 剔除，自有域默认 qingzhou.autos；新域用 scripts\\add-maildomain.js 接入。一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。**MF_STORE=file：状态落在 C:\\yunshudu\\state\\mailfarm\\mailfarm.jsonl（追加日志+快照压缩），部署重启/崩溃不再丢已发邮箱与已收验证码。**",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "imap-bridge",
+      "type": "node",
+      "task": "yunshudu-imap-bridge",
+      "managed": "auto",
+      "port": 8098,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\imap-mail-bridge.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "imap-bridge"
+      ],
+      "env": {
+        "IMB_HOST": "imap.gmail.com",
+        "IMB_PORT": "993",
+        "IMB_TLS": "1",
+        "IMB_TLS_INSECURE": "0",
+        "IMB_DOMAIN": "qingzhou.autos",
+        "IMB_PREFIX": "hl",
+        "IMB_HTTP_HOST": "127.0.0.1",
+        "IMB_HTTP_PORT": "8098",
+        "IMB_POLL_MS": "3000",
+        "IMB_LOOKBACK_H": "24",
+        "IMB_MARK_SEEN": "0"
+      },
+      "envFrom": {
+        "IMB_USER": "IMAP_BRIDGE_USER",
+        "IMB_PASS": "IMAP_BRIDGE_PASS",
+        "IMB_API_KEY": "IMAP_BRIDGE_API_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8098/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "IMAP 收信桥（零依赖）：把真实 IMAP 邮箱（Spacemail 等）包装成 mailfarm 同款 HTTP 契约，pool-supply 只要把 SUPP_MAIL_API 指到 http://127.0.0.1:8098 即可切换，注册流程零改动。只监听 127.0.0.1，不对外暴露。凭据走 secrets.txt（IMAP_BRIDGE_USER/PASS/API_KEY），不入库。未配凭据时 /healthz 仍返回 200，仅取码会报错。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "mail-compat",
+      "type": "node",
+      "task": "yunshudu-mail-compat",
+      "managed": "auto",
+      "port": 8100,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\mail-compat-server.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "mail-compat"
+      ],
+      "env": {
+        "COMPAT_MODE": "dual",
+        "COMPAT_HOST": "127.0.0.1",
+        "COMPAT_PORT": "8100",
+        "COMPAT_DOMAINS": "mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus,qingzhou.autos",
+        "COMPAT_FOREIGN_DENY_R144y": "jixuwz.com,allen23.online,lopwi.cyou,sghd.college,ytu.baby",
+        "COMPAT_PREFIX": "hl",
+        "COMPAT_UPSTREAM": "http://127.0.0.1:8099",
+        "COMPAT_BRIDGE": "http://127.0.0.1:8098",
+        "COMPAT_BRIDGE_DOMAINS": "",
+        "COMPAT_HEALTH_FILE": "C:\\yunshudu\\state\\mail-domain-health.json",
+        "COMPAT_HEALTH_MAX_AGE": "86400",
+        "COMPAT_STATE": "C:\\yunshudu\\state\\mail-compat.json",
+        "COMPAT_MAILFARM_DOMAINS": "qingzhou.autos"
+      },
+      "envFrom": {
+        "COMPAT_UPSTREAM_KEY": "MAILFARM_API_KEY",
+        "COMPAT_BRIDGE_KEY": "IMAP_BRIDGE_API_KEY",
+        "COMPAT_API_KEY": "MAIL_COMPAT_API_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:8100/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "取号三件套适配层：把 mailfarm(8099)/imap-bridge(8098) 或 tempmail.plus 统一成 dola/tempmail.plus 同形接口（/v1/recipe 三件套 + /api/mails 列表/详情 + /v1/mailboxes/{a}/code），任何 dola 风格（含 H3 号厂 h3-register.js）注册机可零改动接入。COMPAT_MODE=mailfarm|tempmail 切换上游；tempmail 模式白嫖公共 API（出墙可配 COMPAT_PROXY）。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    }
+  ],
+  "restartOnDeployDoc": "restartOnDeploy=true: 每次部署都硬重启该服务（用于仓库内的 Node 脚本，保证新代码生效）。false/缺省: 仅当健康检查失败才重启。"
 }
