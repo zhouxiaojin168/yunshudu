@@ -40,6 +40,7 @@ const POOL = String(argvVal('--pool', process.env.H3_POOL_URL || 'http://127.0.0
 const KEY = argvVal('--key', process.env.H3_POOL_KEY || 'sk-hl-admin');
 const SITE = argvVal('--site', process.env.H3_SITE || 'intl');
 const DRY = has('--dry');
+const INCLUDE_ZERO = has('--include-zero');   /* R144i: 默认跳过「零算力号」，不占池位、不浪费探活 */
 const DO_CHECKIN = has('--checkin');
 const REG_N = parseInt(argvVal('--register', '0'), 10) || 0;
 
@@ -91,7 +92,19 @@ function toPoolToken(rec) {
     log('register exit=' + reg.status);
   }
 
-  const accts = readAccounts();
+  let accts = readAccounts();
+  /* R144i 去重②：零算力号（credit.totalCredits=0）默认不入池，落台账 state/h3-zero.jsonl 备查 */
+  const zeroAccts = accts.filter(function (r) { return !((r.credit && r.credit.totalCredits) || 0); });
+  if (zeroAccts.length) {
+    try {
+      fs.mkdirSync(path.join(ROOT, 'state'), { recursive: true });
+      const zl = zeroAccts.map(function (r) { return JSON.stringify({ at: new Date().toISOString(), email: r.email || '', site: r.site || SITE, credits: 0, label: 'zero-skip' }); });
+      fs.appendFileSync(path.join(ROOT, 'state', 'h3-zero.jsonl'), zl.join('\n') + '\n', 'utf8');
+    } catch (e) { /* 台账写失败不影响主流程 */ }
+    log('发现 ' + zeroAccts.length + ' 个零算力号：' + zeroAccts.map(function (r) { return r.email || '?'; }).join(', '));
+    if (!INCLUDE_ZERO) { accts = accts.filter(function (r) { return ((r.credit && r.credit.totalCredits) || 0) > 0; }); log('默认跳过零算力号（强制带上请加 --include-zero）'); }
+    else log('--include-zero：零算力号仍然入池');
+  }
   if (!accts.length) { log('state 里没有可用账号（无 token），结束'); return; }
   log('读到 ' + accts.length + ' 个号（含 token）');
 

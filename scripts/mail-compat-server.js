@@ -52,13 +52,15 @@ function log(m) { console.log('[' + new Date().toISOString() + '] mail-compat ' 
 const MAILFARM_DOMAINS = 'allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby';
 const TEMPMAIL_DOMAINS = 'mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus';
 
-const MODE = env('COMPAT_MODE', 'mailfarm').toLowerCase() === 'tempmail' ? 'tempmail' : 'mailfarm';
+const MODE_RAW = env('COMPAT_MODE', 'mailfarm').toLowerCase();
+/* R144i: dual(=auto) = mailfarm + tempmail 双通道并存：按「地址域名」路由上游，按「域健康度」挑域 */
+const MODE = (MODE_RAW === 'tempmail') ? 'tempmail' : ((MODE_RAW === 'dual' || MODE_RAW === 'auto') ? 'dual' : 'mailfarm');
 
 const CFG = {
   mode: MODE,
   host: env('COMPAT_HOST', '127.0.0.1'),
   port: parseInt(env('COMPAT_PORT', '8100'), 10),
-  domains: env('COMPAT_DOMAINS', MODE === 'tempmail' ? TEMPMAIL_DOMAINS : MAILFARM_DOMAINS)
+  domains: env('COMPAT_DOMAINS', MODE === 'tempmail' ? TEMPMAIL_DOMAINS : (MODE === 'dual' ? (TEMPMAIL_DOMAINS + ',' + MAILFARM_DOMAINS) : MAILFARM_DOMAINS))
     .split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   prefix: env('COMPAT_PREFIX', 'hl'),
   serialStart: parseInt(env('COMPAT_SERIAL_START', '1'), 10) || 1,
@@ -66,6 +68,11 @@ const CFG = {
   upstream: env('COMPAT_UPSTREAM', 'http://127.0.0.1:8099').replace(/\/+$/, ''),
   upstreamKey: env('COMPAT_UPSTREAM_KEY', ''),
   tmBase: env('COMPAT_TM_BASE', 'https://tempmail.plus').replace(/\/+$/, ''),
+  /* R144i: 域健康度（由 mail-domain-health.js 产出），blocked/dead 的域不再发号 */
+  healthPath: env('COMPAT_HEALTH_FILE', path.join(__dirname, '..', 'state', 'mail-domain-health.json')),
+  healthMaxAgeSec: parseInt(env('COMPAT_HEALTH_MAX_AGE', '86400'), 10) || 86400,
+  mailfarmDomains: MAILFARM_DOMAINS.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+  tempmailDomains: TEMPMAIL_DOMAINS.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   proxy: env('COMPAT_PROXY', ''),
   rand: env('COMPAT_RAND', MODE === 'tempmail' ? '1' : '0') === '1',
   apiKey: env('COMPAT_API_KEY', '')
@@ -163,7 +170,43 @@ function badKey(req) {
   const k = req.headers['x-api-key'] || req.headers['authorization'] || '';
   return String(k).replace(/^Bearer\s+/i, '') !== CFG.apiKey;
 }
-function pickDomain(want) { if (want && CFG.domains.indexOf(want) >= 0) return want; return CFG.domains[0] || 'example.com'; }
+/* R144i: 地址域名 -> 上游通道 */
+function channelOf(domain) {
+  const d = String(domain || '').toLowerCase();
+  if (CFG.mailfarmDomains.indexOf(d) >= 0) return 'mailfarm';
+  if (CFG.tempmailDomains.indexOf(d) >= 0) return 'tempmail';
+  return CFG.mode === 'mailfarm' ? 'mailfarm' : 'tempmail';
+}
+/* R144i: 读域健康度（过期即忽略，避免陈旧结论锁死通道） */
+function loadDomainHealth() {
+  try {
+    if (!fs.existsSync(CFG.healthPath)) return {};
+    const j = JSON.parse(fs.readFileSync(CFG.healthPath, 'utf8'));
+    const age = (Date.now() - Date.parse(j.updated_at || 0)) / 1000;
+    if (!(age >= 0) || age > CFG.healthMaxAgeSec) return { _stale: true };
+    return j.domains || {};
+  } catch (e) { return {}; }
+}
+function domainUsable(domain, health) {
+  const h = (health || {})[String(domain || '').toLowerCase()];
+  if (!h) return true;
+  return h.status !== 'blocked' && h.status !== 'dead';
+}
+function pickDomain(want) {
+  const health = loadDomainHealth();
+  const w = String(want || '').toLowerCase();
+  if (w && CFG.domains.indexOf(w) >= 0 && domainUsable(w, health)) return w;
+  const good = CFG.domains.filter(function (d) { return domainUsable(d, health); });
+  return good[0] || CFG.domains[0] || 'example.com';
+}
+/* R144i: 取号前选通道 —— dual 下优先挑「健康且能收码」的 tempmail 域，避开被判 blocked 的 mailfarm 域 */
+function pickChannel(want) {
+  if (CFG.mode === 'tempmail') return 'tempmail';
+  if (CFG.mode === 'mailfarm') return 'mailfarm';
+  const w = String(want || '').toLowerCase();
+  if (w) return channelOf(w);
+  return 'tempmail';
+}
 function readBody(req) {
   return new Promise(function (resolve) {
     let buf = '';
@@ -218,7 +261,8 @@ const server = http.createServer(async function (req, res) {
 
   if (method === 'GET' && p === '/healthz') {
     return json(res, 200, {
-      ok: true, service: 'mail-compat', version: '1.1.0', mode: CFG.mode, domains: CFG.domains, prefix: CFG.prefix,
+      ok: true, service: 'mail-compat', version: '1.2.0', mode: CFG.mode, domains: CFG.domains, prefix: CFG.prefix,
+      channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains }, domain_health: loadDomainHealth(),
       port: CFG.port, next_serial: serial, rand: CFG.rand, upstream: CFG.mode === 'tempmail' ? CFG.tmBase : CFG.upstream,
       proxy: CFG.proxy ? 'enabled' : 'disabled', api_key: CFG.apiKey ? 'enabled' : 'disabled'
     });
@@ -230,14 +274,14 @@ const server = http.createServer(async function (req, res) {
     const prefix = (q.get('prefix') || CFG.prefix || 'hl').trim();
     const wantDomain = (q.get('domain') || '').trim();
     let address = '', domain = pickDomain(wantDomain);
-    if (CFG.mode === 'mailfarm') {
+    if (pickChannel(wantDomain) === 'mailfarm') {
       try {
         const r = await up('/v1/mailboxes/acquire', 'POST', { prefix: prefix });
         if (r.status === 200 && r.json && r.json.address) { address = r.json.address; domain = address.split('@')[1] || domain; }
       } catch (e) { /* 上游不可用时退回本地构造（catch-all 时仍能收） */ }
     }
     if (!address) {
-      if (CFG.mode === 'tempmail') { const a = await acquireTempmail(prefix, wantDomain); address = a.address; domain = a.domain; }
+      if (pickChannel(wantDomain) === 'tempmail') { const a = await acquireTempmail(prefix, wantDomain); address = a.address; domain = a.domain; }
       else address = localAddress(prefix, domain);
     }
     return json(res, 200, {
@@ -246,6 +290,11 @@ const server = http.createServer(async function (req, res) {
       code_api: 'GET /api/mails?email=' + address + '&limit=5',
       code_api_detail: 'GET /api/mails/{mail_id}?email=' + address
     });
+  }
+
+  if (method === 'GET' && p === '/v1/channels') {
+    if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
+    return json(res, 200, { mode: CFG.mode, channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains }, domains: CFG.domains, health: loadDomainHealth() });
   }
 
   if (method === 'GET' && p === '/v2/domains') {
@@ -257,7 +306,7 @@ const server = http.createServer(async function (req, res) {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
     const b = (await readBody(req)) || {};
     const prefix = (b.prefix || CFG.prefix || 'hl').trim();
-    if (CFG.mode === 'mailfarm') {
+    if (pickChannel((b.domain || '').trim()) === 'mailfarm') {
       try { const r = await up('/v1/mailboxes/acquire', 'POST', { prefix: prefix }); return json(res, r.status, r.json || { detail: r.text }); }
       catch (e) { return json(res, 502, { detail: 'upstream error: ' + e.message }); }
     }
@@ -270,7 +319,7 @@ const server = http.createServer(async function (req, res) {
   if (m && method === 'GET') {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
     const addr = m[1], kind = m[2];
-    if (CFG.mode === 'mailfarm') {
+    if (channelOf(addr.split('@')[1] || '') === 'mailfarm') {
       const suffix = kind === 'code' ? ('?timeout=' + encodeURIComponent(q.get('timeout') || '90')) : ('?limit=' + encodeURIComponent(q.get('limit') || '5'));
       try { const r = await up('/v1/mailboxes/' + encodeURIComponent(addr) + '/' + kind + suffix, 'GET', null); return json(res, r.status, r.json || { detail: r.text }); }
       catch (e) { return json(res, 502, { detail: 'upstream error: ' + e.message }); }
@@ -285,7 +334,7 @@ const server = http.createServer(async function (req, res) {
     const addr = q.get('email') || '';
     const limit = parseInt(q.get('limit') || '5', 10) || 5;
     if (!addr) return json(res, 400, { detail: 'email required' });
-    if (CFG.mode === 'tempmail') {
+    if (channelOf(addr.split('@')[1] || '') === 'tempmail') {
       try {
         const r = await tm('/api/mails?email=' + encodeURIComponent(addr) + '&limit=' + limit, 'GET');
         const j = r.json || {};
@@ -305,7 +354,7 @@ const server = http.createServer(async function (req, res) {
     const addr = q.get('email') || '';
     const id = d[1];
     if (!addr) return json(res, 400, { detail: 'email required' });
-    if (CFG.mode === 'tempmail') {
+    if (channelOf(addr.split('@')[1] || '') === 'tempmail') {
       try {
         const r = await tm('/api/mails/' + encodeURIComponent(id) + '?email=' + encodeURIComponent(addr), 'GET');
         const j = r.json || {};
