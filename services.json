@@ -1,4 +1,4 @@
-{
+﻿{
   "version": 1,
   "root": "C:\\yunshudu",
   "note": "服务器侧服务清单：post-deploy.ps1 读本文件逐个确保服务存活；run-service.ps1 按名字启动单个服务。health.kind 支持 http / tcp / file。",
@@ -276,7 +276,7 @@
       ],
       "env": {
         "MF_SERVICE_NAME": "mailfarm",
-        "MF_DOMAINS": "qingzhou.autos",
+        "MF_DOMAINS": "",
         "MF_DOMAINS_NOTE_R144y": "外来 5 域（jixuwz.com/allen23.online/lopwi.cyou/sghd.college/ytu.baby）已剔除：不属我方、公网 MX 在 45.207.214.211、H3 判 blocked。自有新域在 Cloudflare 配好收信后填回本字段。",
         "MF_HTTP_HOST": "0.0.0.0",
         "MF_HTTP_PORT": "8099",

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * start-stack-t3000.js -- 本地按 45.207.214.163:3000 形态起栈（幂等）
  *   形态：new-api(3000，需先手工/脚本起) + mailfarm(8099) + 平台池h3-platform-pool(9940)
  *         + pool-supply(9950) + edge-proxy(8080 -> 3000)
@@ -17,7 +17,7 @@ const MF_KEY = process.env.MF_API_KEY || 'local-mf-key';
 const POOL_ADMIN = process.env.H3P_ADMIN_KEY || 'sk-hl-admin';
 const SUPP_ADMIN = process.env.SUPP_ADMIN_KEY || 'sk-supply-admin';
 /* R144y: 外来域（jixuwz.com 等 5 个）已从默认值移除 —— mailfarm 自有域默认留空，用 MF_DOMAINS 显式指定 */
-const DOMAINS = process.env.MF_DOMAINS || 'qingzhou.autos';
+const DOMAINS = process.env.MF_DOMAINS || '';   /* R144y: mailfarm 自有收信域默认空（外部域 MX 必须真指向 mailfarm 才能填） */
 
 const SECRETS_FILE = path.join(STATE, 'secrets.local.json');
 let SECRETS = {};
