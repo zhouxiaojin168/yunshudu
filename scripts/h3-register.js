@@ -66,7 +66,7 @@ const C = {
   sendExtra: cfg('H3_SEND_EXTRA', '{}'),
   codeField: String(cfg('H3_CODE_FIELD', 'code')),
   queryEmail: String(cfg('H3_QUERY_EMAIL', '1')) !== '0',
-  fullParams: String(cfg('H3_FULL_PARAMS', '1')) !== '0',
+  fullParams: String(cfg('H3_FULL_PARAMS', '0')) !== '0',
   verify: String(cfg('H3_VERIFY', '1')) !== '0',
   codeRe: String(cfg('H3_CODE_RE', '')),
   mailBase: String(cfg('H3_MAIL_BASE', 'http://127.0.0.1:8100')).replace(/\/+$/, ''),
@@ -92,18 +92,20 @@ function uuid() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,
 
 // ---------- HTTP(S) + 代理（CONNECT 隧道） ----------
 let DEVICE_ID = uuid();
-function buildQuery(extra) {
+function buildQuery(extra, fpOverride) {
   const unix = Date.now();
   const p = {
     device_platform: 'web', app_id: C.appId, version_code: C.versionCode, biz_id: C.bizId, unix: String(unix)
   };
-  const extra2 = (C.fullParams ? { lang: 'en', uuid: DEVICE_ID, os_name: 'Windows', browser_name: 'Chrome',
+  const useFull = (fpOverride === undefined) ? C.fullParams : !!fpOverride;
+  const extra2 = (useFull ? { lang: 'en', uuid: DEVICE_ID, os_name: 'Windows', browser_name: 'Chrome',
     browser_language: 'en-US', browser_platform: 'Win32', screen_width: '1920', screen_height: '1080' } : {});
   const all = Object.assign({}, extra2, extra || {}, p);
   const qs = Object.keys(all).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(all[k]); }).join('&');
   return { unix: unix, qs: qs };
 }
-function rawRequest(fullUrl, method, headers, bodyBuf) {
+function rawRequest(fullUrl, method, headers, bodyBuf, proxyOverride) {
+  const PROXY = (proxyOverride === undefined) ? C.proxy : proxyOverride;
   return new Promise(function (resolve, reject) {
     const u = new URL(fullUrl);
     const isHttps = u.protocol === 'https:';
@@ -126,9 +128,9 @@ function rawRequest(fullUrl, method, headers, bodyBuf) {
       if (bodyBuf) req.write(bodyBuf);
       req.end();
     }
-    if (!C.proxy) return doReq(null);
+    if (!PROXY) return doReq(null);
     let pu;
-    try { pu = new URL(C.proxy); } catch (e) { return reject(new Error('bad proxy')); }
+    try { pu = new URL(PROXY); } catch (e) { return reject(new Error('bad proxy')); }
     const connectReq = http.request({ host: pu.hostname, port: pu.port || 8080, method: 'CONNECT', path: u.hostname + ':' + targetPort, headers: { host: u.hostname + ':' + targetPort } });
     connectReq.on('connect', function (res, socket) {
       if (res.statusCode !== 200) { reject(new Error('proxy CONNECT ' + res.statusCode)); return; }
@@ -143,9 +145,10 @@ function rawRequest(fullUrl, method, headers, bodyBuf) {
 }
 
 /** 调用 H3 业务接口：自动拼 params + 签名 */
-async function h3(method, apiPath, params, bodyObj, token, deviceId) {
-  const bq = buildQuery(params);
-  const full = apiPath + '?' + bq.qs;
+async function h3(method, apiPath, params, bodyObj, token, deviceId, useProxy, fpOverride) {
+  const bq = buildQuery(params, fpOverride);
+  /* apiPath 可能已带 ?email=...（发码实测形状）；此时用 & 续接，否则会出现两个 ??? 导致参数被判非法 */
+  const full = (apiPath.indexOf('?') >= 0) ? (apiPath + '&' + bq.qs) : (apiPath + '?' + bq.qs);
   let bodyStr = '{}';
   let bodyBuf = null;
   if (method === 'POST' || method === 'DELETE') {
@@ -158,12 +161,13 @@ async function h3(method, apiPath, params, bodyObj, token, deviceId) {
     'accept-language': 'en-US,en;q=0.9',
     'content-type': 'application/json',
     'origin': C.base, 'referer': C.base + '/',
-    'user-agent': C.ua,
-    'uuid': deviceId || DEVICE_ID, 'device_id': deviceId || DEVICE_ID
+    'user-agent': C.ua
   };
   if (token) headers['token'] = token;
   if (bodyBuf) headers['content-length'] = String(bodyBuf.length);
-  const r = await rawRequest(C.base + full, method, headers, bodyBuf);
+  /* 实测（R143）：发码直连(CN IP)才被接受；登录必须走代理，否则 400「请求异常」 */
+  const px = (useProxy === false) ? '' : (useProxy === true ? C.proxy : undefined);
+  const r = await rawRequest(C.base + full, method, headers, bodyBuf, px);
   let j = null;
   try { j = JSON.parse(r.text); } catch (e) { j = null; }
   return { status: r.status, json: j, text: r.text, headers: r.headers, yy: yy, full: full, body: bodyStr };
@@ -235,21 +239,21 @@ async function pollCode(address) {
 
 // ---------- 主流程 ----------
 async function needCaptcha(email) {
-  const r = await h3('POST', '/v1/api/user/need_captcha', null, { email: email });
+  const r = await h3('POST', '/v1/api/user/need_captcha', null, { email: email }, null, null, false);
   return r;
 }
 async function sendCode(email) {
   const extra = (typeof C.sendExtra === 'string') ? (function () { try { return JSON.parse(C.sendExtra); } catch (e) { return {}; } })() : (C.sendExtra || {});
   /* 实测（R143）：email 必须放 query，body 里带 email 反而 400「请求异常，请检查请求参数」*/
-  if (C.queryEmail) return h3('POST', C.sendPath + '?email=' + encodeURIComponent(email), null, extra, null);
+  if (C.queryEmail) return h3('POST', C.sendPath + '?email=' + encodeURIComponent(email), null, extra, null, null, false);
   let body = C.sendBody.replace('{EMAIL}', email);
   let obj;
   try { obj = JSON.parse(body); } catch (e) { obj = { email: email }; }
   Object.assign(obj, extra);
-  return h3('POST', C.sendPath, null, obj, null);
+  return h3('POST', C.sendPath, null, obj, null, null, false);
 }
 async function loginEmail(email, code) {
-  return h3('POST', C.loginPath, null, { email: email, code: String(code) }, null);
+  return h3('POST', C.loginPath, null, { email: email, code: String(code) }, null, null, true, true);
 }
 function saveAccount(rec) {
   try {
@@ -308,7 +312,7 @@ async function runOne() {
   let credit = null;
   if (token && C.verify) {
     try {
-      const eq = await h3('GET', '/v1/api/user/equity', null, null, token);
+      const eq = await h3('GET', '/v1/api/user/equity', null, null, token, null, true, true);
       const ed = (eq.json && eq.json.data) || {};
       credit = { totalCredits: ed.totalCredits, isNewUser: ed.isNewUser, trialText: ed.trialText, trialExpireTime: ed.trialExpireTime, videoCost: ed.videoCost, memberName: ed.memberName };
       log('     equity: ' + JSON.stringify(credit));
