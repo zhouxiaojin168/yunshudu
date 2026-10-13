@@ -37,7 +37,7 @@ function log() {
 
 const CFG = {
   service: envStr('MF_SERVICE_NAME', 'mailfarm'),
-  version: '0.1.0',
+  version: '0.1.1',
   domains: envStr('MF_DOMAINS', 'localhost').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   apiKey: envStr('MF_API_KEY', ''),
   ingestKey: envStr('MF_INGEST_KEY', ''),
@@ -562,9 +562,14 @@ const httpServer = http.createServer(function (req, res) {
 
   // 收信：给 Cloudflare Email Worker / 转发器用（不需要 25 端口）
   if (method === 'POST' && path === '/v1/ingest') {
-    if (CFG.ingestKey && String(keyOf(req)) !== CFG.ingestKey) return json(res, 401, { detail: 'bad api key' });
+    const _src = String(req.headers['cf-connecting-ip'] || req.headers['x-forwarded-for'] || (req.socket && req.socket.remoteAddress) || '');
+    const _ua = String(req.headers['user-agent'] || '').slice(0, 48);
+    if (CFG.ingestKey && String(keyOf(req)) !== CFG.ingestKey) {
+      log('INGEST 401 src=' + _src + ' ua=' + _ua + ' keylen=' + String(keyOf(req)).length + ' want=' + CFG.ingestKey.length + ' host=' + String(req.headers['host'] || ''));
+      return json(res, 401, { detail: 'bad api key' });
+    }
     return readBody(req, function (b) {
-      if (b === null) return json(res, 400, { detail: 'bad json' });
+      if (b === null) { log('INGEST 400 src=' + _src + ' bad-json'); return json(res, 400, { detail: 'bad json' }); }
       let subject = b.subject || '';
       let text = b.text || '';
       if (!text && b.html) text = stripTags(b.html);
@@ -574,7 +579,8 @@ const httpServer = http.createServer(function (req, res) {
       if (b.raw) { try { const _mp = parseMessage(String(b.raw)); _extra = { to: _mp.to, delivered_to: _mp.delivered_to }; } catch (e) { /* ignore */ } }
       if (b.to_header) { _extra = _extra || {}; _extra.to = String(b.to_header).toLowerCase(); }
       const ok = store.deliver(to, b.from || b.sender || '', subject, text, _extra);
-      if (!ok) return json(res, 400, { detail: 'domain not served (add it to MF_DOMAINS)' });
+      if (!ok) { log('INGEST 400 src=' + _src + ' to=' + String(to).toLowerCase() + ' domain-not-served'); return json(res, 400, { detail: 'domain not served (add it to MF_DOMAINS)' }); }
+      log('INGEST 200 src=' + _src + ' ua=' + _ua + ' to=' + String(to).toLowerCase() + ' from=' + String(b.from || b.sender || '') + ' codes=' + JSON.stringify(extractCodes(subject, text, 3)));
       json(res, 200, { ok: true, address: String(to).toLowerCase(), codes: extractCodes(subject, text, 5) });
     });
   }
