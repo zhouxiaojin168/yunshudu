@@ -37,7 +37,7 @@ function log() {
 
 const CFG = {
   service: envStr('MF_SERVICE_NAME', 'mailfarm'),
-  version: '0.1.1',
+  version: '0.2.0',
   domains: envStr('MF_DOMAINS', 'localhost').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   apiKey: envStr('MF_API_KEY', ''),
   ingestKey: envStr('MF_INGEST_KEY', ''),
@@ -78,22 +78,31 @@ function isCode(tok, allowAlphaOnly) {
 function extractCodes(subject, text, limit) {
   const out = [];
   const max = limit || 5;
-  function push(v, alphaOnly) {
+  function push(v, alphaOnly, free, bf, af) {
     const t = (v === undefined || v === null) ? '' : String(v).trim();
+    if (free) {
+      if (/[-\/.:_]/.test(String(bf || '')) || /[-\/.:_]/.test(String(af || ''))) return;
+      if (/^(19|20)[0-9]{2}$/.test(t)) return;
+      if (/^0+$/.test(t)) return;
+      if (/^([0-9])\1+$/.test(t)) return;
+    }
     if (isCode(t, alphaOnly) && out.indexOf(t) < 0) out.push(t);
   }
   const blobs = [];
   if (subject) blobs.push(String(subject));
   if (text) blobs.push(String(text));
-  const rounds = [[RE_KW_DIGIT, false], [RE_KW_ALNUM, false], [RE_ANY_DIGIT, false], [RE_ANY_ALNUM, true]];
+  const rounds = [[RE_KW_DIGIT, false, false], [RE_KW_ALNUM, false, false], [RE_ANY_DIGIT, false, true], [RE_ANY_ALNUM, true, true]];
   for (let r = 0; r < rounds.length; r++) {
     const re = rounds[r][0];
     const alphaOnly = rounds[r][1];
+    const free = rounds[r][2] === true;
     for (let b = 0; b < blobs.length; b++) {
       re.lastIndex = 0;
       let m;
       while ((m = re.exec(blobs[b])) !== null) {
-        push(m[1], alphaOnly);
+        const bf = m.index > 0 ? blobs[b].charAt(m.index - 1) : '';
+        const af = blobs[b].charAt(m.index + m[0].length);
+        push(m[1], alphaOnly, free, bf, af);
         if (out.length >= max) return out;
         if (m.index === re.lastIndex) re.lastIndex++;
       }
@@ -328,32 +337,84 @@ const store = {
 };
 
 /* --------------------- 邮件正文解析（MIME 够用版） --------------------- */
+/* ---------- 邮件正文解析：折叠头 / RFC2047 / 多部分 / base64 / QP / 字符集 ---------- */
+const _TD = (function () { try { return typeof TextDecoder !== "undefined" ? TextDecoder : null; } catch (e) { return null; } })();
 function stripTags(html) {
-  return String(html).replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ');
+  return String(html)
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|h[1-6]|li)>/gi, "\n")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, String.fromCharCode(34)).replace(/&#39;|&apos;/gi, String.fromCharCode(39)).replace(/&amp;/gi, "&")
+    .replace(/[ \t\u00a0]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 function qpDecode(s) {
-  return String(s).replace(/=\r?\n/g, '').replace(/=([0-9A-Fa-f]{2})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); });
+  return String(s).replace(/=\r?\n/g, "").replace(/=([0-9A-Fa-f]{2})/g, function (_, h) { return String.fromCharCode(parseInt(h, 16)); });
 }
-function b64Decode(s) { try { return Buffer.from(String(s).replace(/\s+/g, ''), 'base64').toString('utf8'); } catch (e) { return ''; } }
-function decodePart(body, enc) {
-  const e = String(enc || '').toLowerCase();
-  if (e === 'base64') return b64Decode(body);
-  if (e === 'quoted-printable') return qpDecode(body);
+function b64ToBytes(s) { return Buffer.from(String(s).replace(/[^A-Za-z0-9+/=]/g, ""), "base64"); }
+function b64Decode(s) { return b64ToBytes(s).toString("utf8"); }
+function decodeBytesToText(bytes, charset) {
+  let cs = String(charset || "").trim().toLowerCase().replace(/^["\x27]|["\x27]$/g, "");
+  if (!cs || cs === "us-ascii" || cs === "ascii" || cs === "unknown-8bit") cs = "utf-8";
+  if (cs === "gb2312" || cs === "gb_2312" || cs === "gbk" || cs === "cp936" || cs === "gb18030") cs = "gb18030";
+  if (cs === "big5" || cs === "big-5" || cs === "cp950") cs = "big5";
+  if (cs === "utf8") cs = "utf-8";
+  if (cs.indexOf("iso-8859-1") === 0 || cs.indexOf("latin") === 0) cs = "utf-8";
+  try { if (_TD) return new _TD(cs).decode(new Uint8Array(bytes)); } catch (e) {}
+  try { if (_TD) return new _TD("utf-8").decode(new Uint8Array(bytes)); } catch (e) {}
+  return Buffer.from(bytes).toString("utf8");
+}
+function qpToBytes(body) {
+  const s = String(body); const bytes = [];
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charAt(i);
+    if (c === "=") {
+      const h = s.substr(i + 1, 2);
+      if (/^[0-9A-Fa-f]{2}$/.test(h)) { bytes.push(parseInt(h, 16)); i += 2; continue; }
+      if (h.charAt(0) === "\r" || h.charAt(0) === "\n") { while (i + 1 < s.length && /[\r\n]/.test(s.charAt(i + 1))) i++; continue; }
+      bytes.push(61); continue;
+    }
+    const code = s.charCodeAt(i);
+    if (code < 128) { bytes.push(code); }
+    else { const b = Buffer.from(c, "utf8"); for (let k = 0; k < b.length; k++) bytes.push(b[k]); }
+  }
+  return bytes;
+}
+function decodePart(body, enc, charset) {
+  const e = String(enc || "").toLowerCase().trim();
+  if (e === "base64") return decodeBytesToText(b64ToBytes(body), charset);
+  if (e === "quoted-printable") return decodeBytesToText(qpToBytes(body), charset);
   return String(body);
 }
-function collectText(raw) {
-  const out = [];
+function unfoldHead(h) { return String(h).replace(/\r?\n[ \t]+/g, " "); }
+function headerVal(head, name) {
+  const m = unfoldHead(head).match(new RegExp("^" + name + ":[ \t]*(.*)$", "im"));
+  return m ? m[1].trim() : "";
+}
+function decodeRFC2047(str) {
+  return String(str).replace(/=\?([^?]+)\?([BbQq])\?([^?]*)\?=/g, function (_, cs, mode, payload) {
+    if (mode.toUpperCase() === "B") return decodeBytesToText(b64ToBytes(payload), cs);
+    return decodeBytesToText(Buffer.from(qpDecode(payload.replace(/_/g, " ")), "binary"), cs);
+  });
+}
+function collectParts(raw) {
+  const parts = [];
   (function walk(part) {
-    const headEnd = part.search(/\r?\n\r?\n/);
-    if (headEnd < 0) { out.push(part); return; }
-    const head = part.slice(0, headEnd);
-    const sepLen = part.slice(headEnd).match(/\r?\n\r?\n/)[0].length;
-    const body = part.slice(headEnd + sepLen);
-    const ctype = (head.match(/content-type:\s*([^;\r\n]+)/i) || [])[1] || '';
-    const enc = (head.match(/content-transfer-encoding:\s*([^\r\n;]+)/i) || [])[1] || '';
-    const bnd = (head.match(/boundary="?([^";\r\n]+)"?/i) || [])[1];
+    const s0 = String(part).replace(/^\r?\n+/, "");
+    const he = s0.search(/\r?\n\r?\n/);
+    let head = "", body = s0;
+    if (he >= 0) { const mm = s0.slice(he).match(/\r?\n\r?\n/); head = s0.slice(0, he); body = s0.slice(he + (mm ? mm[0].length : 0)); }
+    const ctype = String(headerVal(head, "content-type") || "").toLowerCase();
+    const enc = headerVal(head, "content-transfer-encoding");
+    const charset = (ctype.match(/charset\s*=\s*"?([^";\s]+)"?/) || [])[1] || "";
+    let bnd = (ctype.match(/boundary\s*=\s*"?([^";\s]+)"?/) || [])[1] || headerVal(head, "boundary");
+    if (bnd) bnd = String(bnd).replace(/^"|"$/g, "");
     if (/multipart/i.test(ctype) && bnd) {
-      const pieces = body.split('--' + bnd);
+      const pieces = body.split(new RegExp("--" + String(bnd).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
       for (let i = 0; i < pieces.length; i++) {
         const pc = pieces[i];
         if (/^--/.test(pc.trim())) continue;
@@ -362,30 +423,32 @@ function collectText(raw) {
       }
       return;
     }
-    let decoded = decodePart(body, enc);
-    if (/text\/html/i.test(ctype)) decoded = stripTags(decoded);
-    out.push(decoded);
+    parts.push({ ctype: ctype, text: decodePart(body, enc, charset) });
   })(String(raw).replace(/\r\n/g, NL));
-  return out.join(NL);
+  return parts;
+}
+function collectText(raw) {
+  const parts = collectParts(raw);
+  const plain = parts.filter(function (p) { return /text\/plain/i.test(p.ctype) || !p.ctype; }).map(function (p) { return p.text; }).join(NL);
+  if (plain.trim()) return plain;
+  const html = parts.filter(function (p) { return /text\/html/i.test(p.ctype); }).map(function (p) { return stripTags(p.text); }).join(NL);
+  if (html.trim()) return html;
+  return parts.map(function (p) { return /text\/html/i.test(p.ctype) ? stripTags(p.text) : p.text; }).join(NL);
 }
 function parseMessage(raw) {
-  const text = String(raw);
-  const sep = text.indexOf(CRLF + CRLF);
-  const sep2 = text.indexOf(NL + NL);
-  let head = text, body = '';
-  if (sep >= 0) { head = text.slice(0, sep); body = text.slice(sep + 4); }
-  else if (sep2 >= 0) { head = text.slice(0, sep2); body = text.slice(sep2 + 2); }
-  const subjectRaw = (head.match(/^subject:\s*(.*)$/im) || [])[1] || '';
-  let subject = subjectRaw.trim();
-  if (/^=\?/.test(subject)) {
-    subject = subject.replace(/=\?[^?]+\?([BbQq])\?([^?]*)\?=/g, function (_, mode, payload) {
-      return mode.toUpperCase() === 'B' ? b64Decode(payload) : qpDecode(payload.replace(/_/g, ' '));
-    });
-  }
-  const from = ((head.match(/^from:\s*(.*)$/im) || [])[1] || '').trim();
-  const toRaw = (head.match(/^to:\s*(.*)$/im) || [])[1] || '';
-  const dtoRaw = (head.match(/^(?:delivered-to|x-original-to|x-forwarded-to|x-cloudflare-.*?):\s*(.*)$/im) || [])[1] || '';
-  return { subject: subject, from: from, to: toRaw.trim().toLowerCase(), delivered_to: dtoRaw.trim().toLowerCase(), text: collectText(body) };
+  const s0 = String(raw).replace(/\r\n/g, NL).replace(/^From .*\n/, "");
+  const i = s0.indexOf(NL + NL);
+  let head = s0, body = "";
+  if (i >= 0) { head = s0.slice(0, i); body = s0.slice(i + 2); }
+  const subjectRaw = headerVal(head, "subject");
+  const dto = headerVal(head, "delivered-to") || headerVal(head, "x-original-to") || headerVal(head, "x-forwarded-to");
+  return {
+    subject: decodeRFC2047(subjectRaw),
+    from: decodeRFC2047(headerVal(head, "from")).toLowerCase(),
+    to: decodeRFC2047(headerVal(head, "to")).toLowerCase(),
+    delivered_to: decodeRFC2047(dto).toLowerCase(),
+    text: collectText(body)
+  };
 }
 
 /* ----------------------------- SMTP 收信 ----------------------------- */
@@ -572,8 +635,16 @@ const httpServer = http.createServer(function (req, res) {
       if (b === null) { log('INGEST 400 src=' + _src + ' bad-json'); return json(res, 400, { detail: 'bad json' }); }
       let subject = b.subject || '';
       let text = b.text || '';
+      let _mp = null;
+      if (b.raw) { try { _mp = parseMessage(String(b.raw)); } catch (e) { log('WARN ingest raw parse fail: ' + e.message); } }
+      if (_mp) {
+        if (_mp.subject && (!subject || /^(mime-version|content-type|received|arc-|dkim-|return-path)/i.test(String(subject).trim()))) subject = _mp.subject;
+        const pt = String(_mp.text || '').trim();
+        const cur = String(text || '');
+        const looksRaw = /(?:^|\n)(?:received|arc-seal|dkim-signature|mime-version|return-path|authentication-results):/i.test(cur.slice(0, 3000));
+        if (pt && (!cur.trim() || looksRaw || pt.length > cur.length)) text = _mp.text;
+      }
       if (!text && b.html) text = stripTags(b.html);
-      if (b.raw) { try { const mp = parseMessage(String(b.raw)); if (!subject) subject = mp.subject; if (!text) text = mp.text; } catch (e) { log('WARN ingest raw parse fail: ' + e.message); } }
       const to = b.to || b.rcpt || b.address || '';
       let _extra = null;
       if (b.raw) { try { const _mp = parseMessage(String(b.raw)); _extra = { to: _mp.to, delivered_to: _mp.delivered_to }; } catch (e) { /* ignore */ } }
