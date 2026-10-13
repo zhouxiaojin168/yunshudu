@@ -65,6 +65,9 @@ const C = {
   sendBody: String(cfg('H3_SEND_BODY', '{"email":"{EMAIL}"}')),
   sendExtra: cfg('H3_SEND_EXTRA', '{}'),
   codeField: String(cfg('H3_CODE_FIELD', 'code')),
+  queryEmail: String(cfg('H3_QUERY_EMAIL', '1')) !== '0',
+  fullParams: String(cfg('H3_FULL_PARAMS', '1')) !== '0',
+  verify: String(cfg('H3_VERIFY', '1')) !== '0',
   codeRe: String(cfg('H3_CODE_RE', '')),
   mailBase: String(cfg('H3_MAIL_BASE', 'http://127.0.0.1:8100')).replace(/\/+$/, ''),
   mailKey: String(cfg('H3_MAIL_KEY', '')),
@@ -94,7 +97,9 @@ function buildQuery(extra) {
   const p = {
     device_platform: 'web', app_id: C.appId, version_code: C.versionCode, biz_id: C.bizId, unix: String(unix)
   };
-  const all = Object.assign({}, extra || {}, p);
+  const extra2 = (C.fullParams ? { lang: 'en', uuid: DEVICE_ID, os_name: 'Windows', browser_name: 'Chrome',
+    browser_language: 'en-US', browser_platform: 'Win32', screen_width: '1920', screen_height: '1080' } : {});
+  const all = Object.assign({}, extra2, extra || {}, p);
   const qs = Object.keys(all).map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(all[k]); }).join('&');
   return { unix: unix, qs: qs };
 }
@@ -161,7 +166,7 @@ async function h3(method, apiPath, params, bodyObj, token, deviceId) {
   const r = await rawRequest(C.base + full, method, headers, bodyBuf);
   let j = null;
   try { j = JSON.parse(r.text); } catch (e) { j = null; }
-  return { status: r.status, json: j, text: r.text, yy: yy, full: full, body: bodyStr };
+  return { status: r.status, json: j, text: r.text, headers: r.headers, yy: yy, full: full, body: bodyStr };
 }
 
 function ok(j) { return !!(j && j.statusInfo && (j.statusInfo.code === 0 || j.statusInfo.message === 'Success')); }
@@ -189,7 +194,12 @@ async function acquireEmail(prefix) {
 }
 
 function extractCode(text, subject) {
-  const blob = String(text || '') + ' ' + String(subject || '');
+  /* 先把 html 还原成纯文本（H3 的码是 6 个独立 span/td，展开后带空格）*/
+  const plain = String(text || '').replace(/<[^>]+>/g, ' ').replace(/&nbsp;|&#160;/g, ' ').replace(/\s+/g, ' ').trim();
+  const blob = plain + ' ' + String(subject || '');
+  /* ① 带空格的 6 位（H3 实测形状）：code...1 3 8 9 7 9 */
+  const spaced = [/(?:code|Code|CODE)[^0-9]{0,60}((?:\d\s*){6})/, /(?:^|\s)((?:\d\s){5}\d)(?:\s|$)/];
+  for (let i = 0; i < spaced.length; i++) { const m = blob.match(spaced[i]); if (m) { const c = String(m[1]).replace(/\s+/g, ''); if (/^\d{6}$/.test(c)) return c; } }
   if (C.codeRe) { const m = blob.match(new RegExp(C.codeRe, 'i')); if (m) return m[1] || m[0]; }
   const patterns = [
     /(?:code|Code|CODE|verification code|验证码|인증번호|コード)[^0-9]{0,24}(\d{4,8})/,
@@ -229,10 +239,12 @@ async function needCaptcha(email) {
   return r;
 }
 async function sendCode(email) {
+  const extra = (typeof C.sendExtra === 'string') ? (function () { try { return JSON.parse(C.sendExtra); } catch (e) { return {}; } })() : (C.sendExtra || {});
+  /* 实测（R143）：email 必须放 query，body 里带 email 反而 400「请求异常，请检查请求参数」*/
+  if (C.queryEmail) return h3('POST', C.sendPath + '?email=' + encodeURIComponent(email), null, extra, null);
   let body = C.sendBody.replace('{EMAIL}', email);
   let obj;
   try { obj = JSON.parse(body); } catch (e) { obj = { email: email }; }
-  const extra = (typeof C.sendExtra === 'string') ? (function () { try { return JSON.parse(C.sendExtra); } catch (e) { return {}; } })() : (C.sendExtra || {});
   Object.assign(obj, extra);
   return h3('POST', C.sendPath, null, obj, null);
 }
@@ -293,7 +305,16 @@ async function runOne() {
   log('     HTTP ' + l.status + ' code=' + li.code + ' msg=' + JSON.stringify(li.debugInfo || li.message));
   const data = (l.json && l.json.data) || {};
   const token = data.token || data.authToken || data.accessToken || '';
-  const rec = { email: email, code: code, token: token, user: data, at: new Date().toISOString(), base: C.base };
+  let credit = null;
+  if (token && C.verify) {
+    try {
+      const eq = await h3('GET', '/v1/api/user/equity', null, null, token);
+      const ed = (eq.json && eq.json.data) || {};
+      credit = { totalCredits: ed.totalCredits, isNewUser: ed.isNewUser, trialText: ed.trialText, trialExpireTime: ed.trialExpireTime, videoCost: ed.videoCost, memberName: ed.memberName };
+      log('     equity: ' + JSON.stringify(credit));
+    } catch (e) { log('     equity 查询失败 ' + e.message); }
+  }
+  const rec = { email: email, code: code, token: token, cookieSet: (l.headers && l.headers['set-cookie']) || null, user: data, credit: credit, at: new Date().toISOString(), base: C.base };
   if (saveAccount(rec)) log('     已入库 ' + C.statePath + (token ? ' (token len=' + token.length + ')' : ' (无 token)'));
   return rec;
 }
