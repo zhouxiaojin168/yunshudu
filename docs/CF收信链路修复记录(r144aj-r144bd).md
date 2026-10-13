@@ -49,3 +49,27 @@
   建议升级为**命名隧道 + 固定域名** `ingest.qingzhou.autos`（443，CF 原生域名），
   需要额外权限 `Account: Cloudflare Tunnel: Edit`（或在 Zero Trust 面板建一次隧道）。
 - 若日后要让 CF 直连机房（不走隧道），需用 CF **支持的源站端口**(如 8080) + 域名 + Origin Rule 改端口。
+---
+
+## 7. 命名隧道落地（R144bs ~ R144bw，已完成）
+- 隧道：`yunshudu-ingest`，id `897e926d-e0c8-4cde-93a5-9f75c1452533`，`config_src=cloudflare`，status=**healthy**
+- ingress：`ingest.qingzhou.autos` → `http://127.0.0.1:8099`（其余 404）
+- DNS：`ingest.qingzhou.autos` CNAME → `897e926d-….cfargotunnel.com`，**proxied**
+- 服务器：`C:\yunshudu\bin\cloudflared.exe service install <token>` → Windows 服务 `Cloudflared`（Running / Automatic）
+- Worker 绑定（由 `cf-ingest-sync` 自动改绑）：
+  - `INGEST_URL`  = `https://ingest.qingzhou.autos/v1/ingest`
+  - `INGEST_URLS` = 固定域名, quick tunnel, `http://114.66.16.225:8099/v1/ingest`
+- 自愈升级：`state\cf-ingest-fixed.txt` 存在时**固定域名优先**，quick tunnel 降级为回退；
+  实测两次运行：`SYNCED 200 -> https://ingest.qingzhou.autos/v1/ingest` → 再跑 `OK unchanged`（幂等）
+- 验证：`GET https://ingest.qingzhou.autos/healthz` → 200 `{"version":"0.3.1"}`；
+  `POST https://ingest.qingzhou.autos/v1/ingest` → 200 `{"ok":true,"codes":["778899"]}`
+
+## 8. 权限清单（最终需要）
+| 用途 | 权限 |
+|---|---|
+| 上传/改绑 Worker | Account → Workers Scripts → **Edit** |
+| 读 Worker 绑定/日志 | Account → Workers Tail → Read |
+| 改 catch-all | Zone → Email Routing Rules → **Edit** |
+| 建 ingest CNAME | Zone → DNS → **Edit** |
+| 解析 zone | Zone → Zone → Read |
+| 建命名隧道 | Account → Cloudflare Tunnel → **Edit** ← 最后补的这条 |
