@@ -73,6 +73,10 @@ const CFG = {
   healthMaxAgeSec: parseInt(env('COMPAT_HEALTH_MAX_AGE', '86400'), 10) || 86400,
   mailfarmDomains: MAILFARM_DOMAINS.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   tempmailDomains: TEMPMAIL_DOMAINS.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+  /* R144i: 第三通道 = 自建域 -> imap-bridge（默认关；配 COMPAT_BRIDGE_DOMAINS=qingzhou.autos 即启用） */
+  bridge: env('COMPAT_BRIDGE', 'http://127.0.0.1:8098').replace(/\/+$/, ''),
+  bridgeKey: env('COMPAT_BRIDGE_KEY', ''),
+  bridgeDomains: env('COMPAT_BRIDGE_DOMAINS', '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean),
   proxy: env('COMPAT_PROXY', ''),
   rand: env('COMPAT_RAND', MODE === 'tempmail' ? '1' : '0') === '1',
   apiKey: env('COMPAT_API_KEY', '')
@@ -136,10 +140,18 @@ function reqJson(fullUrl, method, headers, bodyObj, proxy) {
   });
 }
 
-function up(pathAndQuery, method, bodyObj) {
+function up(pathAndQuery, method, bodyObj, base, key) {
   const h = {};
-  if (CFG.upstreamKey) h['x-api-key'] = CFG.upstreamKey;
-  return reqJson(CFG.upstream + pathAndQuery, method || 'GET', h, bodyObj, '');
+  const k = (key === undefined) ? CFG.upstreamKey : key;
+  if (k) h['x-api-key'] = k;
+  /* R144i: base 省略 = 老行为（mailfarm 8099）；bridge 通道走 imap-bridge */
+  return reqJson((base || CFG.upstream) + pathAndQuery, method || 'GET', h, bodyObj, '');
+}
+/* R144i: 按通道选上游 —— mailfarm=8099 / bridge=imap-bridge / tempmail=tempmail.plus */
+function upChannel(channel, pathAndQuery, method, bodyObj) {
+  if (channel === 'tempmail') return tm(pathAndQuery, method);
+  if (channel === 'bridge') return up(pathAndQuery, method, bodyObj, CFG.bridge, CFG.bridgeKey);
+  return up(pathAndQuery, method, bodyObj);
 }
 function tm(pathAndQuery, method) {
   const h = { 'accept': 'application/json, text/plain, */*', 'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0 Safari/537.36' };
@@ -174,6 +186,7 @@ function badKey(req) {
 function channelOf(domain) {
   const d = String(domain || '').toLowerCase();
   if (CFG.mailfarmDomains.indexOf(d) >= 0) return 'mailfarm';
+  if (CFG.bridgeDomains.indexOf(d) >= 0) return 'bridge';
   if (CFG.tempmailDomains.indexOf(d) >= 0) return 'tempmail';
   return CFG.mode === 'mailfarm' ? 'mailfarm' : 'tempmail';
 }
@@ -262,7 +275,7 @@ const server = http.createServer(async function (req, res) {
   if (method === 'GET' && p === '/healthz') {
     return json(res, 200, {
       ok: true, service: 'mail-compat', version: '1.2.0', mode: CFG.mode, domains: CFG.domains, prefix: CFG.prefix,
-      channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains }, domain_health: loadDomainHealth(),
+      channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, domain_health: loadDomainHealth(),
       port: CFG.port, next_serial: serial, rand: CFG.rand, upstream: CFG.mode === 'tempmail' ? CFG.tmBase : CFG.upstream,
       proxy: CFG.proxy ? 'enabled' : 'disabled', api_key: CFG.apiKey ? 'enabled' : 'disabled'
     });
@@ -274,14 +287,15 @@ const server = http.createServer(async function (req, res) {
     const prefix = (q.get('prefix') || CFG.prefix || 'hl').trim();
     const wantDomain = (q.get('domain') || '').trim();
     let address = '', domain = pickDomain(wantDomain);
-    if (pickChannel(wantDomain) === 'mailfarm') {
+    const _ch = pickChannel(wantDomain);
+    if (_ch === 'mailfarm' || _ch === 'bridge') {
       try {
-        const r = await up('/v1/mailboxes/acquire', 'POST', { prefix: prefix });
+        const r = await upChannel(_ch, '/v1/mailboxes/acquire', 'POST', { prefix: prefix });
         if (r.status === 200 && r.json && r.json.address) { address = r.json.address; domain = address.split('@')[1] || domain; }
       } catch (e) { /* 上游不可用时退回本地构造（catch-all 时仍能收） */ }
     }
     if (!address) {
-      if (pickChannel(wantDomain) === 'tempmail') { const a = await acquireTempmail(prefix, wantDomain); address = a.address; domain = a.domain; }
+      if (_ch === 'tempmail') { const a = await acquireTempmail(prefix, wantDomain); address = a.address; domain = a.domain; }
       else address = localAddress(prefix, domain);
     }
     return json(res, 200, {
@@ -294,7 +308,7 @@ const server = http.createServer(async function (req, res) {
 
   if (method === 'GET' && p === '/v1/channels') {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
-    return json(res, 200, { mode: CFG.mode, channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains }, domains: CFG.domains, health: loadDomainHealth() });
+    return json(res, 200, { mode: CFG.mode, channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, domains: CFG.domains, health: loadDomainHealth() });
   }
 
   if (method === 'GET' && p === '/v2/domains') {
@@ -306,8 +320,9 @@ const server = http.createServer(async function (req, res) {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
     const b = (await readBody(req)) || {};
     const prefix = (b.prefix || CFG.prefix || 'hl').trim();
-    if (pickChannel((b.domain || '').trim()) === 'mailfarm') {
-      try { const r = await up('/v1/mailboxes/acquire', 'POST', { prefix: prefix }); return json(res, r.status, r.json || { detail: r.text }); }
+    const _ch = pickChannel((b.domain || '').trim());
+    if (_ch === 'mailfarm' || _ch === 'bridge') {
+      try { const r = await upChannel(_ch, '/v1/mailboxes/acquire', 'POST', { prefix: prefix }); return json(res, r.status, r.json || { detail: r.text }); }
       catch (e) { return json(res, 502, { detail: 'upstream error: ' + e.message }); }
     }
     const a = await acquireTempmail(prefix, (b.domain || '').trim());
@@ -319,9 +334,10 @@ const server = http.createServer(async function (req, res) {
   if (m && method === 'GET') {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
     const addr = m[1], kind = m[2];
-    if (channelOf(addr.split('@')[1] || '') === 'mailfarm') {
+    const _ch = channelOf(addr.split('@')[1] || '');
+    if (_ch !== 'tempmail') {
       const suffix = kind === 'code' ? ('?timeout=' + encodeURIComponent(q.get('timeout') || '90')) : ('?limit=' + encodeURIComponent(q.get('limit') || '5'));
-      try { const r = await up('/v1/mailboxes/' + encodeURIComponent(addr) + '/' + kind + suffix, 'GET', null); return json(res, r.status, r.json || { detail: r.text }); }
+      try { const r = await upChannel(_ch, '/v1/mailboxes/' + encodeURIComponent(addr) + '/' + kind + suffix, 'GET', null); return json(res, r.status, r.json || { detail: r.text }); }
       catch (e) { return json(res, 502, { detail: 'upstream error: ' + e.message }); }
     }
     /* tempmail 模式：本地轮询实现 code / messages */
@@ -342,7 +358,7 @@ const server = http.createServer(async function (req, res) {
       } catch (e) { return json(res, 200, { mail_list: [], email: addr, detail: 'upstream error: ' + e.message }); }
     }
     try {
-      const r = await up('/v1/mailboxes/' + encodeURIComponent(addr) + '/messages?limit=' + limit, 'GET', null);
+      const r = await upChannel(channelOf(addr.split('@')[1] || ''), '/v1/mailboxes/' + encodeURIComponent(addr) + '/messages?limit=' + limit, 'GET', null);
       const msgs = (r.json && r.json.messages) || [];
       return json(res, 200, { mail_list: fromMailfarm(addr, msgs, limit), email: addr, count: msgs.length });
     } catch (e) { return json(res, 200, { mail_list: [], email: addr, detail: 'upstream error: ' + e.message }); }
@@ -364,7 +380,7 @@ const server = http.createServer(async function (req, res) {
       } catch (e) { return json(res, 200, { id: id, subject: '', text: '', code: null, detail: 'upstream error: ' + e.message }); }
     }
     try {
-      const r = await up('/v1/mailboxes/' + encodeURIComponent(addr) + '/messages?limit=50', 'GET', null);
+      const r = await upChannel(channelOf(addr.split('@')[1] || ''), '/v1/mailboxes/' + encodeURIComponent(addr) + '/messages?limit=50', 'GET', null);
       const msgs = (r.json && r.json.messages) || [];
       const idx = parseInt(id, 10);
       const hit = msgs[idx - 1] || msgs[0] || null;

@@ -363,16 +363,21 @@
         "mail-compat"
       ],
       "env": {
-        "COMPAT_MODE": "mailfarm",
+        "COMPAT_MODE": "dual",
         "COMPAT_HOST": "127.0.0.1",
         "COMPAT_PORT": "8100",
-        "COMPAT_DOMAINS": "allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby",
+        "COMPAT_DOMAINS": "mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus,allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby,qingzhou.autos",
         "COMPAT_PREFIX": "hl",
         "COMPAT_UPSTREAM": "http://127.0.0.1:8099",
+        "COMPAT_BRIDGE": "http://127.0.0.1:8098",
+        "COMPAT_BRIDGE_DOMAINS": "qingzhou.autos",
+        "COMPAT_HEALTH_FILE": "C:\\yunshudu\\state\\mail-domain-health.json",
+        "COMPAT_HEALTH_MAX_AGE": "86400",
         "COMPAT_STATE": "C:\\yunshudu\\state\\mail-compat.json"
       },
       "envFrom": {
         "COMPAT_UPSTREAM_KEY": "MAILFARM_API_KEY",
+        "COMPAT_BRIDGE_KEY": "IMAP_BRIDGE_API_KEY",
         "COMPAT_API_KEY": "MAIL_COMPAT_API_KEY"
       },
       "health": {
