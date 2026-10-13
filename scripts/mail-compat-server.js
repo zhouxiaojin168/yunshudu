@@ -17,7 +17,7 @@
  *   COMPAT_HOST            默认 127.0.0.1
  *   COMPAT_PORT            默认 8100
  *   COMPAT_DOMAINS         逗号分隔域名池
- *                          mailfarm 模式默认 allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby
+ *                          （R144y）mailfarm 模式默认自有域留空，外来域见 FOREIGN_DOMAINS 黑名单
  *                          tempmail 模式默认 mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus
  *   COMPAT_PREFIX          默认 hl（邮箱前缀）
  *   COMPAT_SERIAL_START    默认 1（本地序号起点；持久化在 COMPAT_STATE）
@@ -49,7 +49,19 @@ const { URL } = require('url');
 function env(k, d) { const v = process.env[k]; return (v === undefined || v === null || String(v) === '') ? (d === undefined ? '' : d) : String(v); }
 function log(m) { console.log('[' + new Date().toISOString() + '] mail-compat ' + m); }
 
-const MAILFARM_DOMAINS = 'allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby';
+/* R144y: 外来域黑名单 —— 这 5 个域不属我方（RDAP 同为 Spaceship 注册；公网 MX 指向 45.207.214.211 那台
+   我们读不到的 mailfarm，带我方 MAILFARM_API_KEY 访问其 8099 仍 401），且实测已被 H3 判 blocked(1200063)。
+   永久禁用：即使被重新写进 COMPAT_DOMAINS / MF_DOMAINS，启动时也会被剔除。 */
+const FOREIGN_DOMAINS = ['jixuwz.com', 'allen23.online', 'lopwi.cyou', 'sghd.college', 'ytu.baby'];
+function notForeign(d) { return FOREIGN_DOMAINS.indexOf(String(d || '').toLowerCase()) < 0; }
+function dropForeign(list) {
+  const kept = [], dropped = [];
+  (list || []).forEach(function (d) { (notForeign(d) ? kept : dropped).push(d); });
+  if (dropped.length) log('[R144y] FOREIGN_DOMAINS dropped: ' + dropped.join(','));
+  return kept;
+}
+/* R144y: mailfarm「自有收信域」默认留空（原硬编码的 5 个外来域已移除）。新自有域写 COMPAT_DOMAINS / COMPAT_MAILFARM_DOMAINS。 */
+const MAILFARM_DOMAINS = env('COMPAT_MAILFARM_DOMAINS', '');
 const TEMPMAIL_DOMAINS = 'mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus';
 
 const MODE_RAW = env('COMPAT_MODE', 'mailfarm').toLowerCase();
@@ -60,8 +72,8 @@ const CFG = {
   mode: MODE,
   host: env('COMPAT_HOST', '127.0.0.1'),
   port: parseInt(env('COMPAT_PORT', '8100'), 10),
-  domains: env('COMPAT_DOMAINS', MODE === 'tempmail' ? TEMPMAIL_DOMAINS : (MODE === 'dual' ? (TEMPMAIL_DOMAINS + ',' + MAILFARM_DOMAINS) : MAILFARM_DOMAINS))
-    .split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+  domains: dropForeign(env('COMPAT_DOMAINS', MODE === 'tempmail' ? TEMPMAIL_DOMAINS : (MODE === 'dual' ? (TEMPMAIL_DOMAINS + (MAILFARM_DOMAINS ? ',' + MAILFARM_DOMAINS : '')) : MAILFARM_DOMAINS))
+    .split(',').map(function (s) { return s.trim(); }).filter(Boolean)),
   prefix: env('COMPAT_PREFIX', 'hl'),
   serialStart: parseInt(env('COMPAT_SERIAL_START', '1'), 10) || 1,
   statePath: env('COMPAT_STATE', path.join(__dirname, '..', 'state', 'mail-compat.json')),
@@ -71,12 +83,12 @@ const CFG = {
   /* R144i: 域健康度（由 mail-domain-health.js 产出），blocked/dead 的域不再发号 */
   healthPath: env('COMPAT_HEALTH_FILE', path.join(__dirname, '..', 'state', 'mail-domain-health.json')),
   healthMaxAgeSec: parseInt(env('COMPAT_HEALTH_MAX_AGE', '86400'), 10) || 86400,
-  mailfarmDomains: MAILFARM_DOMAINS.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
+  mailfarmDomains: dropForeign(MAILFARM_DOMAINS.split(',').map(function (s) { return s.trim(); }).filter(Boolean)),
   tempmailDomains: TEMPMAIL_DOMAINS.split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   /* R144i: 第三通道 = 自建域 -> imap-bridge（默认关；配 COMPAT_BRIDGE_DOMAINS=qingzhou.autos 即启用） */
   bridge: env('COMPAT_BRIDGE', 'http://127.0.0.1:8098').replace(/\/+$/, ''),
   bridgeKey: env('COMPAT_BRIDGE_KEY', ''),
-  bridgeDomains: env('COMPAT_BRIDGE_DOMAINS', '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean),
+  bridgeDomains: dropForeign(env('COMPAT_BRIDGE_DOMAINS', '').split(',').map(function (s) { return s.trim().toLowerCase(); }).filter(Boolean)),
   proxy: env('COMPAT_PROXY', ''),
   rand: env('COMPAT_RAND', MODE === 'tempmail' ? '1' : '0') === '1',
   apiKey: env('COMPAT_API_KEY', ''),
@@ -328,8 +340,8 @@ const server = http.createServer(async function (req, res) {
 
   if (method === 'GET' && p === '/healthz') {
     return json(res, 200, {
-      ok: true, service: 'mail-compat', version: '1.2.0', mode: CFG.mode, domains: CFG.domains, prefix: CFG.prefix,
-      channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, forward_map: CFG.forwardMap, domain_health: loadDomainHealth(),
+      ok: true, service: 'mail-compat', version: '1.3.0', mode: CFG.mode, domains: CFG.domains, prefix: CFG.prefix,
+      channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, foreign_domains: FOREIGN_DOMAINS, forward_map: CFG.forwardMap, domain_health: loadDomainHealth(),
       port: CFG.port, next_serial: serial, rand: CFG.rand, upstream: CFG.mode === 'tempmail' ? CFG.tmBase : CFG.upstream,
       proxy: CFG.proxy ? 'enabled' : 'disabled', api_key: CFG.apiKey ? 'enabled' : 'disabled'
     });
@@ -362,7 +374,7 @@ const server = http.createServer(async function (req, res) {
 
   if (method === 'GET' && p === '/v1/channels') {
     if (badKey(req)) return json(res, 401, { detail: 'bad api key' });
-    return json(res, 200, { mode: CFG.mode, channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, forward_map: CFG.forwardMap, domains: CFG.domains, health: loadDomainHealth() });
+    return json(res, 200, { mode: CFG.mode, channels: { mailfarm: CFG.mailfarmDomains, tempmail: CFG.tempmailDomains, bridge: CFG.bridgeDomains }, foreign_domains: FOREIGN_DOMAINS, forward_map: CFG.forwardMap, domains: CFG.domains, health: loadDomainHealth() });
   }
 
   if (method === 'GET' && p === '/v2/domains') {

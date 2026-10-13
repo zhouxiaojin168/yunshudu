@@ -3,7 +3,7 @@
  * h3-email-probe.js — H3 邮箱地址「形状验收」探针（+号寻址 / 大小写 / 畸形 是否被接受）
  * 只做一件事：POST /v1/api/user/login/email/code?email=<addr>，把上游 statusInfo 原样打出来。
  * 用法：
- *   node h3-email-probe.js --email hl144i+a@jixuwz.com
+ *   node h3-email-probe.js --email hl144i+a@qingzhou.autos   （R144y：示例域改用自有域）
  *   node h3-email-probe.js --email a@b.c --base https://hailuoai.video --proxy http://127.0.0.1:10090
  *   node h3-email-probe.js --email x@y.z --noproxy       # 发码必须直连(CN IP)，默认就是直连
  * 零依赖。

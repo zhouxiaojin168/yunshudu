@@ -3,7 +3,7 @@
  * mail-domain-health.js — 「哪个收信域还能收到 H3 的验证码」健康探针（R144i 新增）
  *
  * 背景（R144i 实测）：对 https://hailuoai.video 发码接口
- *   我方 mailfarm 5 域（jixuwz.com / allen23.online / lopwi.cyou / sghd.college / ytu.baby）
+ *   （R144y）默认只探「自有域 + tempmail 系」；外来 5 域已移出默认列表，需要时用 --foreign 取证
  *     -> HTTP 200 code=1200063 "Verification failed"      = 发不出去（域被 H3 拒）
  *   tempmail 系 / gmail / 163 / qq / 自建域
  *     -> HTTP 200 code=1200019 "temporarily unavailable"  = 软成功（邮件照发，R143 已验证能收到）
@@ -41,15 +41,17 @@ const DEFAULT_DOMAINS = [
   /* 自建 / 高信任 */
   'qingzhou.autos',
   /* tempmail 系 */
-  'mailto.plus', 'fexpost.com', 'fexbox.org', 'fexbox.net', 'tempmail.plus',
-  /* mailfarm 自建 Catch-all（R144i 实测已被 H3 拒） */
-  'jixuwz.com', 'allen23.online', 'lopwi.cyou', 'sghd.college', 'ytu.baby'
+  'mailto.plus', 'fexpost.com', 'fexbox.org', 'fexbox.net', 'tempmail.plus'
 ];
+
+/* R144y: 外来 5 域（不属我方、公网 MX 在 45.207.214.211）——默认不探，仅存档取证：加 --foreign 才纳入 */
+const FOREIGN_DOMAINS = ['jixuwz.com', 'allen23.online', 'lopwi.cyou', 'sghd.college', 'ytu.baby'];
 
 function domains() {
   const d = argvVal('--domains', '');
   if (d) return d.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
   const list = DEFAULT_DOMAINS.slice();
+  if (has('--foreign')) list.push.apply(list, FOREIGN_DOMAINS); /* R144y */
   if (CONTROL) list.push('gmail.com');
   return list;
 }

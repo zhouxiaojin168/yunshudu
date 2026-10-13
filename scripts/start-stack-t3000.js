@@ -16,7 +16,8 @@ fs2.mkdirSync(STATE, { recursive: true });
 const MF_KEY = process.env.MF_API_KEY || 'local-mf-key';
 const POOL_ADMIN = process.env.H3P_ADMIN_KEY || 'sk-hl-admin';
 const SUPP_ADMIN = process.env.SUPP_ADMIN_KEY || 'sk-supply-admin';
-const DOMAINS = process.env.MF_DOMAINS || 'allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby';
+/* R144y: 外来域（jixuwz.com 等 5 个）已从默认值移除 —— mailfarm 自有域默认留空，用 MF_DOMAINS 显式指定 */
+const DOMAINS = process.env.MF_DOMAINS || 'qingzhou.autos';
 
 const SECRETS_FILE = path.join(STATE, 'secrets.local.json');
 let SECRETS = {};

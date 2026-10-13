@@ -276,7 +276,8 @@
       ],
       "env": {
         "MF_SERVICE_NAME": "mailfarm",
-        "MF_DOMAINS": "allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby",
+        "MF_DOMAINS": "qingzhou.autos",
+        "MF_DOMAINS_NOTE_R144y": "外来 5 域（jixuwz.com/allen23.online/lopwi.cyou/sghd.college/ytu.baby）已剔除：不属我方、公网 MX 在 45.207.214.211、H3 判 blocked。自有新域在 Cloudflare 配好收信后填回本字段。",
         "MF_HTTP_HOST": "0.0.0.0",
         "MF_HTTP_PORT": "8099",
         "MF_SMTP_ENABLE": "0",
@@ -298,7 +299,7 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。**MF_STORE=file：状态落在 C:\\yunshudu\\state\\mailfarm\\mailfarm.jsonl（追加日志+快照压缩），部署重启/崩溃不再丢已发邮箱与已收验证码。**",
+      "note": "【R144y】外来 5 域已从 MF_DOMAINS 剔除，自有域默认 qingzhou.autos；新域用 scripts\\add-maildomain.js 接入。一次性收件箱/邮箱农场（零依赖 Node 版）：自有域名 catch-all 发号 + 自动取验证码，给注册机用。机房封 25，故 MF_SMTP_ENABLE=0，改走 POST /v1/ingest（Cloudflare Email Routing + Email Worker 转发到隧道域名）或 Postfix pipe。对外暴露走已有 cloudflared 隧道，别指望机房放行 25。**MF_STORE=file：状态落在 C:\\yunshudu\\state\\mailfarm\\mailfarm.jsonl（追加日志+快照压缩），部署重启/崩溃不再丢已发邮箱与已收验证码。**",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
@@ -366,7 +367,8 @@
         "COMPAT_MODE": "dual",
         "COMPAT_HOST": "127.0.0.1",
         "COMPAT_PORT": "8100",
-        "COMPAT_DOMAINS": "mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus,allen23.online,jixuwz.com,lopwi.cyou,sghd.college,ytu.baby,qingzhou.autos",
+        "COMPAT_DOMAINS": "mailto.plus,fexpost.com,fexbox.org,fexbox.net,tempmail.plus,qingzhou.autos",
+        "COMPAT_FOREIGN_DENY_R144y": "jixuwz.com,allen23.online,lopwi.cyou,sghd.college,ytu.baby",
         "COMPAT_PREFIX": "hl",
         "COMPAT_UPSTREAM": "http://127.0.0.1:8099",
         "COMPAT_BRIDGE": "http://127.0.0.1:8098",
