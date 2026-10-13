@@ -318,7 +318,7 @@
         "imap-bridge"
       ],
       "env": {
-        "IMB_HOST": "mail.spacemail.com",
+        "IMB_HOST": "imap.gmail.com",
         "IMB_PORT": "993",
         "IMB_TLS": "1",
         "IMB_TLS_INSECURE": "0",
