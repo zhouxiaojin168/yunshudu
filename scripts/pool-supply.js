@@ -73,6 +73,15 @@ const SMS_LEDGER_JSONL = process.env.SUPP_SMS_LEDGER_JSONL || path.join(ROOT, 's
 const SMS_COST = Number(process.env.SUPP_SMS_COST || 0.4);
 const SMS_MAX_TRY = Number(process.env.SUPP_SMS_MAX_TRY || 3);
 const SMS_PROVINCE = process.env.SUPP_SMS_PROVINCE || '';
+/* R141c：d1jiema API 文档确认 cardType 取值只有 [实卡,虚卡,全部]。默认「全部」保持既有行为不变
+   （实测好号里也有 162/170 虚拟段，不能一刀切）；命中率掉时可切「实卡」做 A/B：SUPP_SMS_CARD_TYPE=实卡。 */
+const SMS_CARD_TYPE = process.env.SUPP_SMS_CARD_TYPE || '全部';
+/* R141c：余额查询接口（code=leftAmount），用于 /supply/stats 与低余额预警。只读、不计费。 */
+const SMS_LEFT = process.env.SUPP_SMS_LEFT || '';
+/* R141c：黑名单号段（前 3 位，逗号/空格分隔）。命中直接丢弃重取，不发短信、不碰海螺。
+   配合 --ledger-segments 得出的「最脏号段」回填即可。 */
+const SMS_BLOCK_SEGMENTS = String(process.env.SUPP_SMS_BLOCK_SEGMENTS || '').split(/[,\s]+/).filter(Boolean);
+function smsSegmentBlocked(phone) { return SMS_BLOCK_SEGMENTS.indexOf(String(phone || '').slice(0, 3)) >= 0; }
 /* ---- 补号源①.5：mailfarm 邮箱农场（自有域名 catch-all 收信 + 自动取码，零短信成本）---- */
 const MAIL_API = String(process.env.SUPP_MAIL_API || 'http://127.0.0.1:8099').replace(/\/+$/, '');
 const MAIL_KEY = process.env.SUPP_MAIL_KEY || '';
@@ -211,7 +220,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function smsGetPhone(project) {
   if (!SMS_GET) throw new Error('未配置 SUPP_SMS_GET（接码取号接口）');
-  const url = tpl(SMS_GET, { project: project || '', province: SMS_PROVINCE });
+  const url = tpl(SMS_GET, { project: project || '', province: SMS_PROVINCE, cardType: SMS_CARD_TYPE });
   const r = await fetch(url, { headers: SMS_HEADERS });
   const t = await r.text();
   const got = smsAdapter.parsePhone(t);
@@ -272,6 +281,29 @@ function ledgerMark(phone, patch, noBuy) {
 }
 function ledgerOf(phone) { return ledgerLoad().numbers[String(phone || '').trim()] || null; }
 function ledgerIsDead(phone) { const r = ledgerOf(phone); return !!(r && r.status && LEDGER_DEAD[r.status]); }
+/* R141c：查接码平台余额（code=leftAmount）。60s 缓存，避免刷爆接口（每 1000 次请求扣 0.01~0.2 元）。 */
+let smsBalCache = { at: 0, yuan: null, raw: '' };
+function derivedLeftUrl() {
+  if (SMS_LEFT) return SMS_LEFT;
+  /* 从取号模板推导余额接口：code=getPhone -> code=leftAmount，去掉取号专属参数，token 原样保留。 */
+  if (!SMS_GET || SMS_GET.indexOf('code=getPhone') < 0) return '';
+  return SMS_GET.replace('code=getPhone', 'code=leftAmount')
+    .replace(/&(keyWord|phone|province|cardType)=\{?[^&]*\}?/g, '')
+    .replace(/\?&/, '?');
+}
+async function smsBalance(force) {
+  const leftUrl = derivedLeftUrl();
+  if (!leftUrl) return { at: 0, yuan: null, raw: 'no leftAmount url' };
+  if (!force && Date.now() - smsBalCache.at < 60000) return smsBalCache;
+  try {
+    const r = await fetch(leftUrl, { headers: SMS_HEADERS });
+    const t = (await r.text()).trim();
+    const m = t.match(/-?\d+(?:\.\d+)?/);
+    smsBalCache = { at: Date.now(), yuan: m ? Number(m[0]) : null, raw: t.slice(0, 80) };
+  } catch (e) { smsBalCache = { at: Date.now(), yuan: null, raw: 'ERR ' + e.message }; }
+  return smsBalCache;
+}
+
 function ledgerStats() {
   const l = ledgerLoad();
   const rows = Object.keys(l.numbers).map((k) => l.numbers[k]);
@@ -284,12 +316,32 @@ function ledgerStats() {
     buys: buys,
     status: { ok: by('ok'), zero: by('zero'), nosms: by('nosms'), error: by('error'), seen: by('seen') },
     dup_blocked: Number(l.dup_blocked || 0),
+    seg_blocked: Number(l.seg_blocked || 0),
     hit_rate: rows.length ? Math.round((by('ok') / rows.length) * 1000) / 10 : null,
     credits_total: creditsAll,
     sms_cost_est_yuan: spent,
     cost_per_image_yuan: creditsAll > 0 ? Number((spent / (creditsAll / 6)).toFixed(4)) : null,
+    by_segment_worst: ledgerWorstSegments(rows),
     updated_at: l.updated_at
   };
+}
+
+/* R141c：按号段（前 3 位）算脏号率，找出最脏的号段，方便下次换段。 */
+function ledgerWorstSegments(rows) {
+  const seg = {};
+  rows.forEach(function (r) {
+    const p = String(r.phone || '').slice(0, 3);
+    if (!p) return;
+    const x = seg[p] || (seg[p] = { segment: p, total: 0, ok: 0, zero: 0, dirty: 0 });
+    x.total++;
+    if (r.status === 'ok') x.ok++;
+    else if (r.status === 'zero') x.zero++;
+    if (r.status === 'zero' || r.status === 'nosms' || r.status === 'error') x.dirty++;
+  });
+  return Object.keys(seg).map(function (k) {
+    const x = seg[k];
+    return { segment: x.segment, total: x.total, ok: x.ok, zero: x.zero, dirty_rate: Math.round((x.dirty / x.total) * 1000) / 10 };
+  }).sort(function (a, b) { return b.dirty_rate - a.dirty_rate || b.total - a.total; }).slice(0, 10);
 }
 
 /* ------------------------- 补号源②：注册工作流引擎 ------------------------- */
@@ -328,7 +380,14 @@ async function runRegisterFlow() {
         lastPhone = got.phone;
         const known = ledgerOf(got.phone);
         const dead = ledgerIsDead(got.phone);
-        ledgerMark(got.phone, { status: known ? known.status : 'seen', note: dead ? 'dup-blocked' : 'sms-get' });
+        ledgerMark(got.phone, { status: known ? known.status : 'seen', card_type: SMS_CARD_TYPE, province: SMS_PROVINCE || undefined, note: dead ? 'dup-blocked' : 'sms-get' });
+        if (!dead && smsSegmentBlocked(got.phone)) {
+          const l3 = ledgerLoad(); l3.seg_blocked = Number(l3.seg_blocked || 0) + 1; ledgerSave();
+          ledgerMark(got.phone, { status: 'zero', credits: 0, card_type: SMS_CARD_TYPE, note: 'blocked-segment' }, true);
+          log('取号 ' + got.phone + ' 命中黑名单号段 ' + String(got.phone).slice(0, 3) + 'xxx -> 丢弃重取（不发短信）');
+          if (tries >= SMS_MAX_TRY) throw new Error('连续 ' + tries + ' 次取到黑名单号段，本轮放弃');
+          continue;
+        }
         if (dead) {
           const l0 = ledgerLoad();
           l0.dup_blocked = Number(l0.dup_blocked || 0) + 1; ledgerSave();
@@ -547,7 +606,7 @@ const server = http.createServer(async (req, res) => {
       const h = healthyCount(st);
       return send(res, 200, {
         supply: state,
-        config: { pool: POOL, pool_min: POOL_MIN, pool_max: POOL_MAX, interval_ms: INTERVAL, farm_file: FARM_FILE, register_file: REG_FILE, sms_configured: !!SMS_GET, sms_max_try: SMS_MAX_TRY, sms_cost: SMS_COST, ledger: ledgerStats(), register_zeros: Number(state.register_zeros || 0), register_backoff_ms: Number(state.register_backoff_ms || 0) },
+        config: { pool: POOL, pool_min: POOL_MIN, pool_max: POOL_MAX, interval_ms: INTERVAL, farm_file: FARM_FILE, register_file: REG_FILE, sms_configured: !!SMS_GET, sms_max_try: SMS_MAX_TRY, sms_cost: SMS_COST, sms_card_type: SMS_CARD_TYPE, sms_province: SMS_PROVINCE || null, sms_block_segments: SMS_BLOCK_SEGMENTS, sms_balance_yuan: (await smsBalance()).yuan, ledger: ledgerStats(), register_zeros: Number(state.register_zeros || 0), register_backoff_ms: Number(state.register_backoff_ms || 0) },
         pool: { total: h.total, healthy: h.healthy, credits: Math.round(h.credits * 100) / 100 },
         accounts: h.accounts.map((a) => ({ id: a.id, label: a.label, credits: a.credits, held: a.held, healthy: a.healthy, fail_reason: a.fail_reason, checkin_count: a.checkin_count, success_count: a.success_count }))
       });
@@ -592,13 +651,24 @@ const server = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && u === '/supply/ledger') {
       if (!isAdmin(req, {})) return send(res, 401, { code: 'admin_required', message: 'need x-admin-key' });
+      const forceBalance = /[?&]force=1/.test(req.url || '');
       const l = ledgerLoad();
       const rows = Object.keys(l.numbers).map((k) => l.numbers[k]).sort((a, b) => String(b.last_at || '').localeCompare(String(a.last_at || '')));
-      return send(res, 200, { ok: true, stats: ledgerStats(), cost_per_number_yuan: SMS_COST, ledger_file: SMS_LEDGER, recent: rows.slice(0, 200) });
+      return send(res, 200, { ok: true, stats: ledgerStats(), sms_balance_yuan: (await smsBalance(forceBalance)).yuan, cost_per_number_yuan: SMS_COST, ledger_file: SMS_LEDGER, recent: rows.slice(0, 200) });
     }
     return send(res, 404, { code: 'not_found', path: u });
   } catch (e) { return send(res, 500, { code: 'error', message: String(e && e.message || e) }); }
 });
+
+function scoreSegments(l) {
+  const rows = Object.keys(l.numbers).map(function (k) { return l.numbers[k]; });
+  const seg = ledgerWorstSegments(rows);
+  log('号段脏号率 Top（脏=zero|nosms|error）：');
+  if (!seg.length) { log('  (样本不足)'); return; }
+  seg.forEach(function (x) { log('  ' + x.segment + 'xxx  total=' + x.total + ' ok=' + x.ok + ' zero=' + x.zero + ' dirty=' + x.dirty_rate + '%'); });
+  const bad = seg.filter(function (x) { return x.total >= 3 && x.dirty_rate >= 60; }).map(function (x) { return x.segment; });
+  if (bad.length) log('建议加入黑名单号段：' + bad.join(',') + '（可用下面新增的 SUPP_SMS_BLOCK_SEGMENTS 生效）');
+}
 
 async function main() {
   if (process.argv.indexOf('--ledger-import-pool') >= 0) {
@@ -614,6 +684,15 @@ async function main() {
     }
     log('从池子导入台账 ' + n0 + ' 个号');
     log(JSON.stringify(ledgerStats()));
+    process.exit(0);
+  }
+  if (process.argv.indexOf('--sms-balance') >= 0) {
+    const b = await smsBalance(true);
+    log('接码余额 ' + (b.yuan === null ? '(解析失败: ' + b.raw + ')' : b.yuan + ' 元') + '  cardType=' + SMS_CARD_TYPE + (SMS_PROVINCE ? ' province=' + SMS_PROVINCE : ''));
+    process.exit(0);
+  }
+  if (process.argv.indexOf('--ledger-segments') >= 0) {
+    scoreSegments(ledgerLoad());
     process.exit(0);
   }
   if (process.argv.indexOf('--ledger') >= 0) {

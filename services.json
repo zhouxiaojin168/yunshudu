@@ -234,7 +234,10 @@
         "SUPP_MAIL_WAIT_MS": "90000",
         "SUPP_SMS_COST": "0.4",
         "SUPP_SMS_MAX_TRY": "3",
-        "SUPP_SMS_LEDGER": "C:\\yunshudu\\app\\state\\sms-ledger.json"
+        "SUPP_SMS_LEDGER": "C:\\yunshudu\\app\\state\\sms-ledger.json",
+        "SUPP_SMS_CARD_TYPE": "全部",
+        "SUPP_SMS_BLOCK_SEGMENTS": "",
+        "SUPP_SMS_PROVINCE": ""
       },
       "envFrom": {
         "SUPP_POOL_ADMIN_KEY": "H3P_ADMIN_KEY",
