@@ -37,7 +37,7 @@ function log() {
 
 const CFG = {
   service: envStr('MF_SERVICE_NAME', 'mailfarm'),
-  version: '0.3.0',
+  version: '0.3.1',
   domains: envStr('MF_DOMAINS', 'localhost').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   apiKey: envStr('MF_API_KEY', ''),
   ingestKey: envStr('MF_INGEST_KEY', ''),
@@ -73,6 +73,22 @@ function isCode(tok, allowAlphaOnly) {
   if (/[0-9]/.test(t)) return true;
   if (allowAlphaOnly && t === t.toUpperCase() && t.length >= 5 && /^[A-Z0-9]+$/.test(t)) return true;
   return false;
+}
+
+function strongCodes(s) {
+  const out = [];
+  const rex = [RE_KW_DIGIT, RE_KW_ALNUM];
+  for (let i = 0; i < rex.length; i++) {
+    const re = rex[i];
+    re.lastIndex = 0;
+    let m;
+    const str = String(s || '');
+    while ((m = re.exec(str)) !== null) {
+      if (m[1] && out.indexOf(m[1]) < 0) out.push(m[1]);
+      if (m.index === re.lastIndex) re.lastIndex++;
+    }
+  }
+  return out;
 }
 
 function extractCodes(subject, text, limit) {
@@ -680,9 +696,10 @@ const httpServer = http.createServer(function (req, res) {
         let best = '', bestScore = -1;
         for (let ci = 0; ci < cands.length; ci++) {
           const c = cands[ci];
-          const nCodes = extractCodes('', c, 5).length;
+          const nStrong = strongCodes(c).length;
+          const nDigits = (c.match(/(?<![0-9])[0-9]{4,8}(?![0-9])/g) || []).length;
           const mimey = (/content-transfer-encoding|----=_nextpart/i.test(c) || /^received:/im.test(c) || /^[A-Za-z0-9+/=\s]{400,}$/.test(c.trim())) ? 1 : 0;
-          const sc = nCodes * 100 + (mimey ? 0 : 10) + Math.min(9, Math.floor(c.length / 400));
+          const sc = nStrong * 1000 + nDigits * 100 + (mimey ? 0 : 10) + Math.min(9, Math.floor(c.length / 400));
           if (sc > bestScore) { bestScore = sc; best = c; }
         }
         if (best) text = best;
