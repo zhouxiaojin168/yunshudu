@@ -24,6 +24,7 @@ const F = {
   secretsTxt: path.join(ROOT, 'secrets.txt'),
   tunnel: path.join(ROOT, 'state', 'tunnel-url.txt'),
   workerSrc: path.join(ROOT, 'app', 'deploy', 'cf-email-worker-ingest.js'),
+  fixed: path.join(ROOT, 'state', 'cf-ingest-fixed.txt'),
   log: path.join(ROOT, 'logs', 'cf-ingest-sync.log')
 };
 function log(m) {
@@ -49,10 +50,14 @@ function secretVal(name) {
   const src = readText(F.workerSrc);
   if (!/export default/.test(src)) return log('SKIP no-worker-src ' + F.workerSrc);
 
-  const want = {
-    INGEST_URL: tunnel + '/mailfarm/v1/ingest',
-    INGEST_URLS: tunnel + '/mailfarm/v1/ingest,' + FALLBACK_IP
-  };
+  // 固定域名优先（命名隧道 ingest.qingzhou.autos）；没有固定域名才退回 quick tunnel
+  const tunnelBase = tunnel + '/mailfarm/v1/ingest';
+  const fixed = firstLine(readText(F.fixed)).replace(/\/+$/, '');
+  const primary = /^https?:\/\//.test(fixed) ? fixed : tunnelBase;
+  const list = [primary];
+  if (tunnelBase !== primary) list.push(tunnelBase);
+  if (list.indexOf(FALLBACK_IP) < 0) list.push(FALLBACK_IP);
+  const want = { INGEST_URL: primary, INGEST_URLS: list.join(',') };
 
   const H = { Authorization: 'Bearer ' + token };
   let r = await fetch(API + '/accounts', { headers: H });
