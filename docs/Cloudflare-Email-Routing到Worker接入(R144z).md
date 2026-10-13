@@ -39,6 +39,29 @@
 
 ---
 
+## 2.5 ★ 重要更正（R144z 复查 CF 官方文档）
+
+> 原计划里的「CF 转发挂子域」——**这条是错的**，必须更正。
+
+CF 官方《Email routing rules and addresses》原文：
+
+> Each entry is either a literal recipient address (for example, `support@example.com`), which creates a routing rule for that address, or a `*@domain` catch-all (for example, `*@example.com`), which configures the catch-all rule for that domain. **Catch-all entries support apex domains only.** To route mail sent to an Email Routing subdomain, list each literal recipient address, such as `support@mail.example.com`.
+
+即：**catch-all（任意地址）只能挂在 apex 域上**；子域虽然能收，但必须逐个列出**字面地址**。
+号池要的是「随机 `hlxxxx@域` 都能收」⇒ **子域路线不可行**。
+
+于是只剩三条正确路线：
+
+| 路线 | 做法 | 成本 | 代价 |
+|---|---|---|---|
+| **1（0 成本，最快）** | 把 **apex `qingzhou.autos` 的 MX 从 Google 换成 CF** → 开 Email Routing catch-all → Worker | 0 | Google 侧收信停（实测 RCPT 全 550，**当前无任何在用信箱**，实际无损失）；`COMPAT_BRIDGE_DOMAINS` 里的 `qingzhou.autos` 要摘掉，改走 mailfarm 通道 |
+| **2（推荐，可批量）** | **新买域**，apex 直接交给 CF → 每域一个 catch-all → Worker | 每域 $1~11/年 | 这才是上游那套「5 个域」的真正原因：**一个域 = 一个 catch-all**，多域还能分摊风控 |
+| **3（保留 Google）** | apex 保持 Google，另用新域做 CF 路由 | 同 2 | `qingzhou.autos` 不出现在 catch-all 里 |
+
+> 结论修正：**「用子域省钱」作废**；要扩收信域就得买域（或把 apex 交出去）。
+
+---
+
 ## 3 爷爷要做的事（二选一）
 
 ### 路线 甲：给 token，全自动（推荐）
@@ -54,10 +77,10 @@ Cloudflare Dashboard → My Profile → API Tokens → Create Token → **Custom
    - `INGEST_URL` = `http://114.66.16.225:8099/v1/ingest`
    - `INGEST_KEY` = 服务器 `C:\yunshudu\secrets.txt` 里的 `MAILFARM_INGEST_KEY`（点 Encrypt）
 3. **开 Email Routing**：CF → 域名 `qingzhou.autos` → Email → Email Routing → Enable（会提示加 MX，**别在 apex 上做**，见下）
-4. **挂子域**（保住 apex 的 Google 邮箱）：先加一条子域 MX，例如
-   - 名称 `m1`，类型 `MX`，内容 `route1.mx.cloudflare.net`，优先级 10（route2/route3 同，21/31）
-   - 然后 Email Routing → Routes → **Catch-all** → Action = `Send to a Worker` → 选 `yunshudu-ingest`
-   - 目标域填 `m1.qingzhou.autos`
+4. **决定吃哪个 apex**（见 §2.5）：
+   - 路线 1：把 `qingzhou.autos` 的 MX 整体换成 CF 的（删 `smtp.google.com(1)`，加 `route1/route2/route3.mx.cloudflare.net` 10/21/31）——**先确认 Google 侧没有在用信箱**（本轮实测：`yipian@` / `yipian01@` / 随机地址全 550，仅 `postmaster@` 250）
+   - 路线 2：新买域，按 CF 提示加 MX
+5. **开 Catch-all**：Email Routing → Routing Rules → **Catch-all** → Action = `Send to a Worker` → 选 `yunshudu-ingest`（**只对 apex 生效**）
 5. **回我一句**「m1 好了」→ 我执行：`node scripts\add-maildomain.js --domain m1.qingzhou.autos --write` + 部署 + 发一封真信验通
 
 ---

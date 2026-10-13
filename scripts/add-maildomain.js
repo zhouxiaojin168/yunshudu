@@ -173,6 +173,11 @@ function upsertServiceEnv(name, key, add) {
     if (rec.verdict === 'DNS_OK' && rec.health.status === 'blocked') say('  ⚠️ 目标平台已判 blocked —— 先别投入');
     say('  结论  : ' + rec.verdict + (rec.why ? ' (' + rec.why + ')' : ''));
     report.domains[d] = rec;
+    /* R144z-correct: CF 官方明确 Catch-all 仅支持 apex 域（子域只能逐条列字面地址） */
+    if (rec.is_subdomain && (plan.ch === 'A' || CF_ROUTING)) {
+      rec.warn_catchall = 'CF Catch-all 只支持 apex 域 —— 子域需逐条列字面地址，号池随机地址模式不可用；请改用独立域 apex，或把 apex 交给 CF';
+      say('  ⚠️ ' + rec.warn_catchall);
+    }
     report.cf_intent = report.cf_intent.concat(cfIntentFor(zone, d, spf.length > 0, dmarc.length > 0));
   }
   if (report.cf_intent.length) {
