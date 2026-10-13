@@ -37,7 +37,7 @@ function log() {
 
 const CFG = {
   service: envStr('MF_SERVICE_NAME', 'mailfarm'),
-  version: '0.2.0',
+  version: '0.3.0',
   domains: envStr('MF_DOMAINS', 'localhost').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   apiKey: envStr('MF_API_KEY', ''),
   ingestKey: envStr('MF_INGEST_KEY', ''),
@@ -447,8 +447,40 @@ function parseMessage(raw) {
     from: decodeRFC2047(headerVal(head, "from")).toLowerCase(),
     to: decodeRFC2047(headerVal(head, "to")).toLowerCase(),
     delivered_to: decodeRFC2047(dto).toLowerCase(),
-    text: collectText(body)
+    text: (function () {
+      const full = collectText(s0);
+      if (full && full.replace(/[\s\u0000]/g, '').length) return full;
+      return body ? collectText(body) : full;
+    })()
   };
+}
+
+/* 兜底：无论头有没有被截掉，都能从「Content-Transfer-Encoding: base64」块里把正文捞出来 */
+function salvageEncoded(raw) {
+  const src = String(raw);
+  const out = [];
+  const chunks = src.split(/content-transfer-encoding:\s*base64/i);
+  for (let i = 1; i < chunks.length; i++) {
+    let c = chunks[i];
+    const he = c.search(/\r?\n\r?\n/);
+    if (he >= 0) c = c.slice(he).replace(/^\r?\n\r?\n/, '');
+    c = String(c).split(/--{2,}/)[0];
+    c = c.replace(/[^A-Za-z0-9+/=]/g, '');
+    if (c.length >= 16) {
+      const d = Buffer.from(c, 'base64').toString('utf8');
+      if (d && d.replace(/[\s\u0000-\u0008]/g, '').length >= 2) out.push(d);
+    }
+  }
+  if (!out.length) {
+    const t = src.replace(/[^A-Za-z0-9+/=]/g, '');
+    if (t.length >= 16 && t.length % 4 === 0) {
+      try {
+        const d = Buffer.from(t, 'base64').toString('utf8');
+        if (d && /[\u4e00-\u9fa5]|[A-Za-z]{3}/.test(d)) out.push(d);
+      } catch (e) {}
+    }
+  }
+  return out.join(NL);
 }
 
 /* ----------------------------- SMTP 收信 ----------------------------- */
@@ -639,10 +671,21 @@ const httpServer = http.createServer(function (req, res) {
       if (b.raw) { try { _mp = parseMessage(String(b.raw)); } catch (e) { log('WARN ingest raw parse fail: ' + e.message); } }
       if (_mp) {
         if (_mp.subject && (!subject || /^(mime-version|content-type|received|arc-|dkim-|return-path)/i.test(String(subject).trim()))) subject = _mp.subject;
-        const pt = String(_mp.text || '').trim();
-        const cur = String(text || '');
-        const looksRaw = /(?:^|\n)(?:received|arc-seal|dkim-signature|mime-version|return-path|authentication-results):/i.test(cur.slice(0, 3000));
-        if (pt && (!cur.trim() || looksRaw || pt.length > cur.length)) text = _mp.text;
+        let _salv = '';
+        if (b.raw) { try { _salv = salvageEncoded(String(b.raw)); } catch (e) {} }
+        const cands = [];
+        if (String(_mp.text || '').trim()) cands.push(String(_mp.text));
+        if (_salv.trim()) cands.push(_salv);
+        if (String(text || '').trim()) cands.push(String(text));
+        let best = '', bestScore = -1;
+        for (let ci = 0; ci < cands.length; ci++) {
+          const c = cands[ci];
+          const nCodes = extractCodes('', c, 5).length;
+          const mimey = (/content-transfer-encoding|----=_nextpart/i.test(c) || /^received:/im.test(c) || /^[A-Za-z0-9+/=\s]{400,}$/.test(c.trim())) ? 1 : 0;
+          const sc = nCodes * 100 + (mimey ? 0 : 10) + Math.min(9, Math.floor(c.length / 400));
+          if (sc > bestScore) { bestScore = sc; best = c; }
+        }
+        if (best) text = best;
       }
       if (!text && b.html) text = stripTags(b.html);
       const to = b.to || b.rcpt || b.address || '';
