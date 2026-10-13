@@ -26,9 +26,13 @@ export default {
     });
     const body = await res.text();
     console.log('ingest ' + res.status + ' to=' + message.to + ' body=' + body.slice(0, 200));
+    if (res.status >= 500) {
+      // 服务端 5xx / 我方宕机：抛出 -> CF 会重试，不让信静默丢失
+      throw new Error('ingest 5xx ' + res.status + ': ' + body.slice(0, 120));
+    }
     if (!res.ok) {
-      // 让 CF 侧看到失败（needs SMTP error 可触发重试）；不抛则视为已接收
-      throw new Error('ingest failed ' + res.status + ': ' + body.slice(0, 120));
+      // 4xx（多见于 MF_DOMAINS 没配该域）：只记日志、不退回，避免对外表现为「拒收」；配置问题由我方日志兜
+      console.log('WARN ingest ' + res.status + ' to=' + message.to + ' body=' + body.slice(0, 160));
     }
   }
 };
