@@ -1,4 +1,4 @@
-﻿{
+{
   "version": 1,
   "root": "C:\\yunshudu",
   "note": "服务器侧服务清单：post-deploy.ps1 读本文件逐个确保服务存活；run-service.ps1 按名字启动单个服务。health.kind 支持 http / tcp / file。",
