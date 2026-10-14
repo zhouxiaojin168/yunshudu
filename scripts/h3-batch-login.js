@@ -139,8 +139,15 @@ async function loginOne(acct, index) {
   const tag = '[' + (acct.label || ('#' + index)) + ']';
   const inst = ensureInstance(index);
   const fp = factory.loadFingerprint(inst.dir);
-  const px = factory.loadProxy(inst.dir);
-  const record = { label: acct.label || inst.id, kind: acct.kind || 'refresh', email: acct.email || '', profile: inst.id, profile_dir: inst.dir, started: new Date().toISOString(), ok: false, steps: [] };
+  let px = factory.loadProxy(inst.dir);
+  /* 一号一出口：账号自带 proxy（形如 http://user:pass@host:port 或 socks5://host:port）时，直接覆盖实例代理 */
+  if (acct.proxy) {
+    try {
+      const u = new URL(String(acct.proxy));
+      px = { enabled: true, type: u.protocol.replace(':', ''), host: u.hostname, port: Number(u.port || 80), username: decodeURIComponent(u.username || ''), password: decodeURIComponent(u.password || ''), remark: 'per-account', useLocalChain: false, localChainHost: '127.0.0.1', localChainPort: 17896, localChainType: 'http' };
+    } catch (e) { log(tag, '账号自带 proxy 解析失败，忽略: ' + acct.proxy); }
+  }
+  const record = { label: acct.label || inst.id, kind: acct.kind || 'refresh', email: acct.email || '', profile: inst.id, profile_dir: inst.dir, proxy_used: (px && px.enabled) ? (px.host + ':' + px.port) : null, started: new Date().toISOString(), ok: false, steps: [] };
   const step = (n, m, extra) => { record.steps.push({ n: n, m: m, at: new Date().toISOString(), extra: extra || null }); log(tag, '步骤' + n + ' ' + m + (extra ? ' :: ' + JSON.stringify(extra).slice(0, 240) : '')); };
 
   /* ① 建实例 profile */
@@ -191,7 +198,16 @@ async function loginOne(acct, index) {
         uaData: navigator.userAgentData ? navigator.userAgentData.platform : null, webglVendor: gv, webglRenderer: gl, canvas: ch };
     }).catch(e => ({ err: e.message }));
     record.fpSeen = fpSeen;
-    step('②', '站点已开，指纹实测', fpSeen);
+    /* 出口实测：这一号到底从哪个 IP 出去的（一号一出口的证据） */
+    const exitIp = await page.evaluate(async () => {
+      try {
+        const r = await fetch('http://ip-api.com/json/?fields=status,country,countryCode,query,isp', { cache: 'no-store' });
+        const j = await r.json();
+        return { ip: j.query, country: j.country, cc: j.countryCode, isp: j.isp };
+      } catch (e) { return { err: e.message }; }
+    }).catch(e => ({ err: e.message }));
+    record.exitIp = exitIp;
+    step('②', '站点已开，指纹实测 + 出口实测', { fp: fpSeen, exit: exitIp });
 
     /* ③ 登录 */
     let token = null, loginData = null, resp = null;
@@ -276,6 +292,7 @@ async function loginOne(acct, index) {
     const tokCookie = cookies.find(c => c.name === '_token');
     const state = {
       label: record.label, profile: inst.id, kind: record.kind, email: record.email || (loginData && loginData.email) || '',
+      exitIp: record.exitIp || null, proxy_used: record.proxy_used || null, site: (acct.site || (SITE.indexOf('hailuoai.video') >= 0 ? 'intl' : 'cn')),
       userID: (loginData && loginData.userID) || (verify['/v1/api/user/info'] && verify['/v1/api/user/info'].userID) || '',
       userName: (loginData && loginData.userName) || '',
       createTime: (loginData && loginData.createTime) || (verify['/v1/api/user/info'] && verify['/v1/api/user/info'].createTime) || 0,
