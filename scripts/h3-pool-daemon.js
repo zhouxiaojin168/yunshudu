@@ -236,8 +236,9 @@ function report(st) {
     console.log('prune: ' + pool.length + ' -> ' + keep.length + ' (备份 ' + path.basename(C.pool) + '.bak-*)');
     process.exit(0);
   }
-  /* 首轮一定「巡检 + 补号到目标」；--loop 之后按 interval 再来 */
-  const st = await pass(true);
+  /* 首轮一定「巡检 + 补号到目标」；补过号就再复检一轮，报表才准确 */
+  let st = await pass(true);
+  if (st.lastRefill) st = await pass(false);
   report(st);
   if (flag('loop')) {
     console.log('\n常驻模式: 每 ' + C.interval + 's 一轮 (Ctrl+C 退出)');
