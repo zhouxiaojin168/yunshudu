@@ -394,6 +394,54 @@
       "note": "取号三件套适配层：把 mailfarm(8099)/imap-bridge(8098) 或 tempmail.plus 统一成 dola/tempmail.plus 同形接口（/v1/recipe 三件套 + /api/mails 列表/详情 + /v1/mailboxes/{a}/code），任何 dola 风格（含 H3 号厂 h3-register.js）注册机可零改动接入。COMPAT_MODE=mailfarm|tempmail 切换上游；tempmail 模式白嫖公共 API（出墙可配 COMPAT_PROXY）。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "h3-email-pool",
+      "type": "node",
+      "task": "yunshudu-h3-email-pool",
+      "managed": "auto",
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\h3-pool-daemon.js",
+      "scriptArgs": [
+        "--loop",
+        "--interval",
+        "600",
+        "--target",
+        "200",
+        "--concurrency",
+        "6",
+        "--pool",
+        "C:\\yunshudu\\state\\h3\\h3-accounts.jsonl",
+        "--state",
+        "C:\\yunshudu\\state\\h3\\h3-pool-state.json",
+        "--dead",
+        "C:\\yunshudu\\state\\h3\\h3-accounts.dead.jsonl"
+      ],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "h3-email-pool"
+      ],
+      "env": {
+        "MF_BASE": "http://127.0.0.1:8099",
+        "H3_HOST": "hailuoai.video",
+        "H3_LANG": "en",
+        "H3_TARGET": "200"
+      },
+      "envFrom": {
+        "MF_KEY": "MAILFARM_API_KEY"
+      },
+      "health": {
+        "kind": "file",
+        "path": "C:\\yunshudu\\state\\h3\\h3-pool-state.json",
+        "maxAgeSec": 1800,
+        "retries": 20,
+        "intervalSec": 5
+      },
+      "note": "海外海螺(hailuoai.video)邮箱号池「调度层」：每 600s 巡检一次(额度/掉号)，存活<target(200) 自动用 h3-pool.js 并发补号；池文件 state\\h3\\h3-accounts.jsonl，状态 state\\h3\\h3-pool-state.json。注意：该池目前只产「账号外壳」，海外站新号 totalCredits=0（无新人礼），出片需另接算力来源。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
   ],
   "restartOnDeployDoc": "restartOnDeploy=true: 每次部署都硬重启该服务（用于仓库内的 Node 脚本，保证新代码生效）。false/缺省: 仅当健康检查失败才重启。"
