@@ -37,7 +37,7 @@ function log() {
 
 const CFG = {
   service: envStr('MF_SERVICE_NAME', 'mailfarm'),
-  version: '0.3.1',
+  version: '0.3.2',
   domains: envStr('MF_DOMAINS', 'localhost').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   apiKey: envStr('MF_API_KEY', ''),
   ingestKey: envStr('MF_INGEST_KEY', ''),
@@ -300,6 +300,8 @@ const store = {
     const msg = { ts: Math.round(now / 1000), sender: sender || '', rcpt: addr, subject: subject || '', text: text || '', codes: codes };
     if (extra && extra.to) msg.to = String(extra.to).toLowerCase();
     if (extra && extra.delivered_to) msg.delivered_to = String(extra.delivered_to).toLowerCase();
+    if (extra && extra.raw) msg.raw = String(extra.raw).slice(0, 30000);
+    if (extra && extra.pick) msg.pick = extra.pick;
     box.messages.push(msg);
     if (box.messages.length > CFG.maxMsgs) box.messages = box.messages.slice(-CFG.maxMsgs);
     this.receivedTotal++;
@@ -321,13 +323,15 @@ const store = {
     return null;
   },
 
-  messages: function (address, limit) {
+  messages: function (address, limit, withRaw) {
     const addr = String(address || '').trim().toLowerCase();
     const box = this.boxes.get(addr);
     if (!box) return null;
     const k = Number(limit || 20);
     return box.messages.slice(-k).map(function (m) {
-      return { ts: m.ts, sender: m.sender, rcpt: m.rcpt, to: m.to || '', delivered_to: m.delivered_to || '', subject: m.subject, codes: m.codes, body_preview: String(m.text || '').slice(0, 500) };
+      const o = { ts: m.ts, sender: m.sender, rcpt: m.rcpt, to: m.to || '', delivered_to: m.delivered_to || '', subject: m.subject, codes: m.codes, body_preview: String(m.text || '').slice(0, 500), pick: m.pick || null };
+      if (withRaw) o.raw = String(m.raw || '');
+      return o;
     });
   },
 
@@ -484,7 +488,8 @@ function salvageEncoded(raw) {
     c = c.replace(/[^A-Za-z0-9+/=]/g, '');
     if (c.length >= 16) {
       const d = Buffer.from(c, 'base64').toString('utf8');
-      if (d && d.replace(/[\s\u0000-\u0008]/g, '').length >= 2) out.push(d);
+      if (!d || d.replace(/[\s\u0000-\u0008]/g, '').length < 2) continue;
+      out.push(/<\/?(?:html|body|div|table|tr|td|span|p|a|br|img)\b/i.test(d) ? stripTags(d) : d);
     }
   }
   if (!out.length) {
@@ -499,6 +504,39 @@ function salvageEncoded(raw) {
   return out.join(NL);
 }
 
+function mimeHeadRatio(s) {
+  const lines = String(s || "").split(/\r?\n/);
+  const n = Math.min(lines.length, 25);
+  if (!n) return 0;
+  let h = 0;
+  for (let i = 0; i < n; i++) if (/^[A-Za-z][A-Za-z0-9-]{1,38}:\s/.test(lines[i])) h++;
+  return h / n;
+}
+function looksMimey(s) {
+  const t = String(s || "");
+  if (/content-transfer-encoding|----=_nextpart/i.test(t)) return true;
+  if (/^received:|^arc-|^dkim-signature:|^authentication-results:|^x-qq-mime|^message-id:/im.test(t)) return true;
+  if (/this is a multi-part message/i.test(t)) return true;
+  if (/^[A-Za-z0-9+/=\s]{400,}$/.test(t.trim())) return true;
+  if (mimeHeadRatio(t) > 0.55 && t.split(/\r?\n/).length >= 4) return true;
+  return false;
+}
+function bodyScore(s) {
+  const t = String(s || "");
+  if (!t.replace(/[\s\u0000]/g, "").length) return -1e9;
+  const nStrong = strongCodes(t).length;
+  const cjk = (t.match(/[\u4e00-\u9fff]/g) || []).length;
+  const words = (t.match(/[A-Za-z]{3,}/g) || []).length;
+  const nDigits = (t.match(/(?<![0-9])[0-9]{4,8}(?![0-9])/g) || []).length;
+  let sc = 0;
+  sc += nStrong * 10000;
+  sc += Math.min(60, cjk) * 8;
+  sc += Math.min(40, words) * 2;
+  sc += Math.min(6, nDigits) * 3;
+  sc -= Math.min(60, Math.floor(t.length / 900));
+  if (looksMimey(t)) sc -= 1000000;
+  return sc;
+}
 /* ----------------------------- SMTP 收信 ----------------------------- */
 function startSmtp() {
   const server = net.createServer(function (sock) {
@@ -685,30 +723,32 @@ const httpServer = http.createServer(function (req, res) {
       let text = b.text || '';
       let _mp = null;
       if (b.raw) { try { _mp = parseMessage(String(b.raw)); } catch (e) { log('WARN ingest raw parse fail: ' + e.message); } }
-      if (_mp) {
-        if (_mp.subject && (!subject || /^(mime-version|content-type|received|arc-|dkim-|return-path)/i.test(String(subject).trim()))) subject = _mp.subject;
-        let _salv = '';
-        if (b.raw) { try { _salv = salvageEncoded(String(b.raw)); } catch (e) {} }
+      if (_mp && _mp.subject && (!subject || /^(mime-version|content-type|received|arc-|dkim-|return-path)/i.test(String(subject).trim()) || /^=\?/.test(String(subject).trim()))) subject = _mp.subject;
+      let _pick = null;
+      if (b.raw) {
+        let _salv = ''; try { _salv = salvageEncoded(String(b.raw)); } catch (e) {}
         const cands = [];
-        if (String(_mp.text || '').trim()) cands.push(String(_mp.text));
-        if (_salv.trim()) cands.push(_salv);
-        if (String(text || '').trim()) cands.push(String(text));
-        let best = '', bestScore = -1;
+        if (_mp && String(_mp.text || '').trim()) cands.push({ src: 'parsed', v: String(_mp.text) });
+        if (_salv.trim()) cands.push({ src: 'salvage', v: String(_salv) });
+        if (String(b.text || '').trim()) cands.push({ src: 'payload', v: String(b.text) });
+        let best = '', bestScore = -1e18, bestSrc = '-';
         for (let ci = 0; ci < cands.length; ci++) {
-          const c = cands[ci];
-          const nStrong = strongCodes(c).length;
-          const nDigits = (c.match(/(?<![0-9])[0-9]{4,8}(?![0-9])/g) || []).length;
-          const mimey = (/content-transfer-encoding|----=_nextpart/i.test(c) || /^received:/im.test(c) || /^[A-Za-z0-9+/=\s]{400,}$/.test(c.trim())) ? 1 : 0;
-          const sc = nStrong * 1000 + nDigits * 100 + (mimey ? 0 : 10) + Math.min(9, Math.floor(c.length / 400));
-          if (sc > bestScore) { bestScore = sc; best = c; }
+          const csrc = cands[ci].src;
+          const prio = csrc === 'parsed' ? 400 : (csrc === 'salvage' ? 0 : 0);
+          const sc = bodyScore(cands[ci].v) + prio;
+          if (sc > bestScore) { bestScore = sc; best = cands[ci].v; bestSrc = csrc; }
         }
         if (best) text = best;
+        _pick = { src: bestSrc, score: bestScore, n: cands.length, lens: cands.map(function (c) { return String(c.v).length; }), names: cands.map(function (c) { return c.src; }) };
+        log('INGEST-PICK src=' + bestSrc + ' score=' + bestScore + ' n=' + cands.length + ' lens=' + JSON.stringify(_pick.lens) + ' rawlen=' + String(b.raw).length);
       }
       if (!text && b.html) text = stripTags(b.html);
       const to = b.to || b.rcpt || b.address || '';
       let _extra = null;
       if (b.raw) { try { const _mp = parseMessage(String(b.raw)); _extra = { to: _mp.to, delivered_to: _mp.delivered_to }; } catch (e) { /* ignore */ } }
       if (b.to_header) { _extra = _extra || {}; _extra.to = String(b.to_header).toLowerCase(); }
+      if (b.raw) { _extra = _extra || {}; _extra.raw = String(b.raw).slice(0, 30000); }
+      if (_pick) { _extra = _extra || {}; _extra.pick = _pick; }
       const ok = store.deliver(to, b.from || b.sender || '', subject, text, _extra);
       if (!ok) { log('INGEST 400 src=' + _src + ' to=' + String(to).toLowerCase() + ' domain-not-served'); return json(res, 400, { detail: 'domain not served (add it to MF_DOMAINS)' }); }
       log('INGEST 200 src=' + _src + ' ua=' + _ua + ' to=' + String(to).toLowerCase() + ' from=' + String(b.from || b.sender || '') + ' codes=' + JSON.stringify(extractCodes(subject, text, 3)));
@@ -733,7 +773,7 @@ const httpServer = http.createServer(function (req, res) {
       return;
     }
     let lim = Number(query.limit || 20); if (!Number.isFinite(lim) || lim < 1) lim = 20; if (lim > 200) lim = 200;
-    const msgs = store.messages(address, lim);
+    const msgs = store.messages(address, lim, /^(1|true|yes)$/i.test(String(query.raw || '')));
     if (msgs === null) return json(res, 404, { detail: 'mailbox not found' });
     return json(res, 200, { address: address, count: msgs.length, messages: msgs });
   }
