@@ -36,6 +36,12 @@ function classify(geo) {
 }
 
 async function exitOnce(via) {
+  /* 首选 ip-api(http)（国内出口也可达），失败再试 ipify */
+  try {
+    const g = await proxyFetch('http://ip-api.com/json/?fields=status,query', { proxy: via, timeoutMs: 20000 });
+    const gj = JSON.parse(g.body.toString('utf8'));
+    if (gj && gj.query) return gj.query;
+  } catch (e) { /* fallthrough */ }
   const r = await proxyFetch('https://api.ipify.org?format=json', { proxy: via, timeoutMs: 25000 });
   return JSON.parse(r.body.toString('utf8')).ip;
 }
