@@ -201,7 +201,7 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "账号池引擎（服务端账号池）：N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。上游接口全在 config/pool-adapter.<x>.json 里（base/path/auth/map/body 模板/models 参数映射），换上游不动代码；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。当前指向乙路-国内站 hailuoai.com（R113 起：接码平台手机号+短信可全自动注册，池子的号源即国内站；海外站 hailuoai.video 只能 Google/Apple 登录、无法自动补号，故仅保留适配器文件备用）。",
+      "note": "账号池引擎（服务端账号池）：N 个上游账号汇成一个池，按「最肥优先 + 预占 + 402 换号 + 定时签到」对外供算力。上游接口全在 config/pool-adapter.<x>.json 里（base/path/auth/map/body 模板/models 参数映射），换上游不动代码；管理密钥从 secrets.txt 的 H3P_ADMIN_KEY 读。当前指向乙路-国内站 hailuoai.com（R113 起：接码平台手机号+短信可全自动注册，池子的号源即国内站；海外站 hailuoai.video 走 Google/Apple/Facebook OAuth，且注册门已关（R151 实测 login/email 与 login/phone 均回 1200048「仅可登录历史账号」），新号 0 额度；老号首登补发 150（R150 实证），故海外站号源=老号池 + 批量登录；适配器文件保留备用）。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
@@ -255,7 +255,7 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。已接好三件：①mailfarm 邮箱补号 ②海螺签名工作流（config/pool-register.hailuo-cn.json，国内站手机号+短信，step.sign=hailuo 自动签名）③接码平台（SUPP_SMS_* 从 secrets.txt 注入）。海外站 hailuoai.video 网页只有 Google/Apple 登录，不能用接码；国内站 hailuoai.com 网页是手机号+短信。",
+      "note": "「无限算力」的补给站：健康账号数低于下限就自动补号（农场文件 / 注册工作流 / 接码平台），并定时全池签到把免费额度拿满。管理面 /supply/stats|guard|checkin|import|register。已接好三件：①mailfarm 邮箱补号 ②海螺签名工作流（config/pool-register.hailuo-cn.json，国内站手机号+短信，step.sign=hailuo 自动签名）③接码平台（SUPP_SMS_* 从 secrets.txt 注入）。R151 修正：海外站 hailuoai.video 的 login/phone 支持 areaCode=86（r150b 实测回 1200009「验证码有误」=号码被认可），但**注册已关**（1200048「仅可登录历史账号」）；邮箱路同理。故海外站只能登录历史账号，新增算力靠「老号首登补发 150」+ 批量登录工厂（scripts/h3-batch-login.js）。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     },
