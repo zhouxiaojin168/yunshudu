@@ -98,15 +98,34 @@ async function probe(e) {
     const plan = JSON.parse(fs.readFileSync(planFile, 'utf8'));
     fs.mkdirSync(OPTS, { recursive: true });
     console.log('并发跑 ' + plan.streams.length + ' 条流（每流一个独立出口）' + (dry ? '  [DRY]' : '') + '\n');
-    const tasks = plan.streams.filter((s) => s.accounts.length).map((s, idx) => new Promise((resolve) => {
+    const tasks = plan.streams.filter((s) => s.accounts.length).map((s) => new Promise((resolve) => {
       const f = path.join(OPTS, 'exitmulti-' + s.port + '.jsonl');
-      fs.writeFileSync(f, s.accounts.map((a) => JSON.stringify(a)).join('\n') + '\n');
-      if (dry) { console.log('  :' + s.port + '  ' + s.name + '  → 会跑 ' + s.accounts.length + ' 号 (文件 ' + f + ')'); return resolve({ port: s.port, code: 0, dry: true }); }
-      const p = spawn(process.execPath, [path.join(__dirname, 'h3-batch-login.js'), '--in', f, '--concurrency', String(s.accounts.length), '--proxy', 'http://127.0.0.1:' + s.port, '--login-proxy', 'http://127.0.0.1:' + s.port, '--keep'], { cwd: ROOT });
+      const outF = path.join(OPTS, 'exitmulti-' + s.port + '.out.jsonl');
+      const profD = s.profiles || path.join(ROOT, 'state', 'h3-profiles', 'exit-' + s.port);
+      /* ★ R168 修：一号一出口 —— 把本流出口写进每个账号，浏览器出口 + 取CK改道都走它
+         （h3-batch-login 的 --proxy 只在「新建实例」时生效，已存在实例会沿用旧 proxy_config.json） */
+      const accs = s.accounts.map((a) => (a.proxy ? a : Object.assign({}, a, { proxy: 'http://127.0.0.1:' + s.port })));
+      fs.writeFileSync(f, accs.map((a) => JSON.stringify(a)).join('\n') + '\n');
+      /* ★ R168 修：每流独立 out + 独立档案目录，避免同账号/同 profile 并发撞车
+         （原实现两流都用 H3-001 -> launchPersistentContext: browser has been closed） */
+      const cli = [path.join(__dirname, 'h3-batch-login.js'), '--in', f, '--out', outF, '--profiles', profD,
+        '--concurrency', String(s.accounts.length),
+        '--proxy', (s.upstream || ('http://127.0.0.1:' + s.port)),
+        '--login-proxy', 'http://127.0.0.1:' + s.port];
+      if (has('keep')) cli.push('--keep');
+      const tpl = s.template || plan.template;
+      if (tpl) cli.push('--template', tpl);
+      console.log('  :' + s.port + '  ' + s.name + '  → ' + s.accounts.length + ' 号  档案=' + profD);
+      if (dry) { console.log('     in =' + f + '\n     out=' + outF + '\n     cmd=' + cli.join(' ')); return resolve({ port: s.port, code: 0, dry: true }); }
+      const p = spawn(process.execPath, cli, { cwd: ROOT });
       let out = '';
       p.stdout.on('data', (d) => { out += d.toString(); });
       p.stderr.on('data', (d) => { out += d.toString(); });
-      p.on('exit', (code) => { console.log('  :' + s.port + ' 退出码=' + code + '\n' + out.split('\n').slice(-4).join('\n')); resolve({ port: s.port, code }); });
+      p.on('exit', (code) => {
+        const keep = out.split('\n').filter((l) => /OK  |FAIL |结束|失败:/.test(l));
+        console.log('  :' + s.port + ' 退出码=' + code + '\n' + keep.join('\n'));
+        resolve({ port: s.port, code: code, out: outF });
+      });
     }));
     const r = await Promise.all(tasks);
     console.log('\n汇总: ' + JSON.stringify(r));
