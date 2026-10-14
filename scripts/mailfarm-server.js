@@ -37,7 +37,7 @@ function log() {
 
 const CFG = {
   service: envStr('MF_SERVICE_NAME', 'mailfarm'),
-  version: '0.3.2',
+  version: '0.3.3',
   domains: envStr('MF_DOMAINS', 'localhost').split(',').map(function (s) { return s.trim(); }).filter(Boolean),
   apiKey: envStr('MF_API_KEY', ''),
   ingestKey: envStr('MF_INGEST_KEY', ''),
@@ -504,6 +504,15 @@ function salvageEncoded(raw) {
   return out.join(NL);
 }
 
+function collapseSpacedDigits(s) {
+  const t = String(s || "");
+  const re = /(?<![0-9])((?:[0-9][ \t\u00a0\r\n]{1,3}){3,}[0-9])(?![0-9])/g;
+  return t.replace(re, function (m, g1, off) {
+    const before = t.slice(Math.max(0, off - 300), off);
+    if (!/验证码|校验码|动态码|确认码|安全码|verification\s*code|verify\s*code|login\s*code|security\s*code|one[\s-]?time|otp/i.test(before)) return m;
+    return g1.replace(/[ \t\u00a0\r\n]/g, "");
+  });
+}
 function mimeHeadRatio(s) {
   const lines = String(s || "").split(/\r?\n/);
   const n = Math.min(lines.length, 25);
@@ -748,6 +757,7 @@ const httpServer = http.createServer(function (req, res) {
       if (b.raw) { try { const _mp = parseMessage(String(b.raw)); _extra = { to: _mp.to, delivered_to: _mp.delivered_to }; } catch (e) { /* ignore */ } }
       if (b.to_header) { _extra = _extra || {}; _extra.to = String(b.to_header).toLowerCase(); }
       if (b.raw) { _extra = _extra || {}; _extra.raw = String(b.raw).slice(0, 30000); }
+      text = collapseSpacedDigits(text);
       if (_pick) { _extra = _extra || {}; _extra.pick = _pick; }
       const ok = store.deliver(to, b.from || b.sender || '', subject, text, _extra);
       if (!ok) { log('INGEST 400 src=' + _src + ' to=' + String(to).toLowerCase() + ' domain-not-served'); return json(res, 400, { detail: 'domain not served (add it to MF_DOMAINS)' }); }
