@@ -42,6 +42,7 @@ const https = require('https');
 const PW = process.env.PW_DIR || 'D:\\破甲\\1\\OpenAI.Codex_26.715.3651.0_x64(免安装版 适合大多数电脑)\\.codex\\skills\\openai-security-review\\node_modules\\playwright';
 const { chromium } = require(PW);
 const factory = require('./h3-profile-factory.js');
+const { proxyFetch } = require('./h3-proxy-fetch.js');
 
 const ROOT = path.resolve(__dirname, '..');
 const MD5LIB = (() => { try { return fs.readFileSync(path.join(__dirname, 'h3-md5.js'), 'utf8'); } catch (e) { return ''; } })();
@@ -69,6 +70,7 @@ const OPTS = {
   concurrency: Number(arg('concurrency', 1)),
   headless: String(arg('headless', 'false')) === 'true',
   proxy: arg('proxy', 'http://127.0.0.1:10090'),
+  loginProxy: arg('login-proxy', process.env.H3_LOGIN_PROXY || ''),   /* ★ 取CK/取号专用出口（与实例浏览出口解耦） */
   timeoutMs: Number(arg('timeout', 90000)),
   keep: has('keep'),
   push: has('push'),
@@ -175,6 +177,29 @@ async function loginOne(acct, index) {
     });
     ctx.setDefaultTimeout(OPTS.timeoutMs);
     await ctx.addInitScript(factory.buildInitScript(fp));
+    /* ★ Dola「取CK时不走左侧代理，必须开 TUN」对位：登录/取CK 相关请求改道到独立出口（--login-proxy） */
+    if (OPTS.loginProxy) {
+      await ctx.route('**/*', async (route) => {
+        const rq = route.request();
+        const u = rq.url();
+        const hit = /securetoken\.googleapis\.com|identitytoolkit|\/v1\/api\/user\/login/.test(u);
+        if (!hit) return route.continue();
+        try {
+          const hdrs = Object.assign({}, rq.headers());
+          for (const k of ['host', 'content-length', 'proxy-connection', 'accept-encoding']) delete hdrs[k];
+          const r = await proxyFetch(u, { method: rq.method(), headers: hdrs, body: rq.postData() || undefined, proxy: OPTS.loginProxy, timeoutMs: OPTS.timeoutMs });
+          const rh = Object.assign({}, r.headers);
+          delete rh['transfer-encoding']; delete rh['content-encoding'];
+          rh['content-length'] = String(r.body.length);
+          record.ckRoutes = (record.ckRoutes || 0) + 1;
+          log(tag, '[取CK出口] ' + rq.method() + ' ' + u.slice(0, 96) + ' -> HTTP ' + r.status + ' via ' + OPTS.loginProxy);
+          await route.fulfill({ status: r.status, headers: rh, body: r.body });
+        } catch (e) {
+          log(tag, '[取CK出口] 改道失败，回落实例出口: ' + e.message);
+          try { await route.continue(); } catch (e2) {}
+        }
+      });
+    }
     const page = await ctx.newPage();
     page.setDefaultTimeout(OPTS.timeoutMs);
 
@@ -199,12 +224,12 @@ async function loginOne(acct, index) {
     }).catch(e => ({ err: e.message }));
     record.fpSeen = fpSeen;
     /* 出口实测：这一号到底从哪个 IP 出去的（一号一出口的证据） */
+    /* ★ 出口实测：站点是 HTTPS，必须用 https 探针（http://ip-api.com 会被浏览器判混合内容） */
     const exitIp = await page.evaluate(async () => {
-      try {
-        const r = await fetch('http://ip-api.com/json/?fields=status,country,countryCode,query,isp', { cache: 'no-store' });
-        const j = await r.json();
-        return { ip: j.query, country: j.country, cc: j.countryCode, isp: j.isp };
-      } catch (e) { return { err: e.message }; }
+      const out = {};
+      try { const r = await fetch('https://api.ipify.org?format=json', { cache: 'no-store' }); const j = await r.json(); out.ip = j.ip; } catch (e) { out.err = e.message; }
+      try { const r2 = await fetch('https://ipwho.is/', { cache: 'no-store' }); const j2 = await r2.json(); if (j2 && j2.success) { out.ip = out.ip || j2.ip; out.country = j2.country; out.cc = j2.country_code; out.isp = j2.connection && j2.connection.isp; out.city = j2.city; } } catch (e) {}
+      return out;
     }).catch(e => ({ err: e.message }));
     record.exitIp = exitIp;
     step('②', '站点已开，指纹实测 + 出口实测', { fp: fpSeen, exit: exitIp });
@@ -292,7 +317,7 @@ async function loginOne(acct, index) {
     const tokCookie = cookies.find(c => c.name === '_token');
     const state = {
       label: record.label, profile: inst.id, kind: record.kind, email: record.email || (loginData && loginData.email) || '',
-      exitIp: record.exitIp || null, proxy_used: record.proxy_used || null, site: (acct.site || (SITE.indexOf('hailuoai.video') >= 0 ? 'intl' : 'cn')),
+      exitIp: record.exitIp || null, proxy_used: record.proxy_used || null, login_proxy_used: OPTS.loginProxy || null, ck_routes: record.ckRoutes || 0, site: (acct.site || (SITE.indexOf('hailuoai.video') >= 0 ? 'intl' : 'cn')),
       userID: (loginData && loginData.userID) || (verify['/v1/api/user/info'] && verify['/v1/api/user/info'].userID) || '',
       userName: (loginData && loginData.userName) || '',
       createTime: (loginData && loginData.createTime) || (verify['/v1/api/user/info'] && verify['/v1/api/user/info'].createTime) || 0,
