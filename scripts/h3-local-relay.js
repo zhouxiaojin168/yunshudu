@@ -19,18 +19,31 @@
  *     H3R_STATE      状态文件（默认 <ROOT>\state\h3-local.json）
  *     H3R_UPSTREAM   兜底上游（默认空）
  *     H3R_SELF_KEY   上报鉴权 key（必填；服务器从 secrets.txt 注入）
+ *     H3R_WAKE_CMD   自建机「唤醒/开机」命令（默认空=不启用）。
+ *                    有请求打进来但上游不可用时会执行它，实现「有人调用就试着开机」。
+ *                    AutoDL 若提供开机入口，把它写成对应的 curl/命令行即可；
+ *                    没有入口时留空，本服务只记日志（并节流）。
+ *     H3R_WAKE_MIN_INTERVAL  两次唤醒尝试的最小间隔秒数（默认 600）
+ *     H3R_WAKE_STATE 唤醒节流状态文件（默认 <ROOT>\state\h3-wake.json）
+ *
+ *   路由补充：
+ *     POST /wake     手动触发一次唤醒（头 x-self-key 同上）——给"预热按钮/定时任务"用
  */
 'use strict';
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { Readable } = require('stream');
+const { exec } = require('child_process');
 
 const ROOT = path.resolve(__dirname, '..');
 const PORT = Number(process.env.H3R_PORT || 9123);
 const STATE = process.env.H3R_STATE || path.join(ROOT, 'state', 'h3-local.json');
 const FALLBACK = String(process.env.H3R_UPSTREAM || '').replace(/\/+$/, '');
 const SELF_KEY = String(process.env.H3R_SELF_KEY || '');
+const WAKE_CMD = String(process.env.H3R_WAKE_CMD || '');
+const WAKE_MIN = Math.max(30, Number(process.env.H3R_WAKE_MIN_INTERVAL || 600));
+const WAKE_STATE = process.env.H3R_WAKE_STATE || path.join(ROOT, 'state', 'h3-wake.json');
 
 function load() {
   try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch (e) { return {}; }
@@ -45,6 +58,42 @@ function log(l) {
   const s = '[' + new Date().toISOString() + '] ' + l;
   console.log(s);
   try { fs.mkdirSync(path.join(ROOT, 'logs'), { recursive: true }); fs.appendFileSync(path.join(ROOT, 'logs', 'h3-local-relay.log'), s + '\n', 'utf8'); } catch (e) {}
+}
+
+function loadWake() { try { return JSON.parse(fs.readFileSync(WAKE_STATE, 'utf8')); } catch (e) { return {}; } }
+function saveWake(o) { try { fs.mkdirSync(path.dirname(WAKE_STATE), { recursive: true }); fs.writeFileSync(WAKE_STATE, JSON.stringify(o, null, 2), 'utf8'); } catch (e) {} }
+
+/** 有人调用但上游不可用 -> 尝试唤醒自建机；带最小间隔节流，避免刷爆。 */
+function maybeWake(reason, force) {
+  const now = Date.now();
+  if (!WAKE_CMD) {
+    log('wake 未配置(' + reason + ') -> 仅提示：上游不可用');
+    return { fired: false, reason: 'not-configured' };
+  }
+  const w = loadWake();
+  const last = Number(w.last_ms || 0);
+  const gap = Math.round((now - last) / 1000);
+  if (!force && last && (now - last) < WAKE_MIN * 1000) {
+    return { fired: false, reason: 'throttled', waited_s: gap, next_in_s: WAKE_MIN - gap };
+  }
+  saveWake({ last_ms: now, last_at: new Date().toISOString(), reason: reason });
+  log('★ 触发唤醒(' + reason + '): ' + WAKE_CMD);
+  // ★ R1187 加固：唤醒命令绝不允许把本服务打崩（沙箱 / 无权限 / 命令不存在 / EPERM 都要能活）
+  let spawnError = null;
+  try {
+    const child = exec(WAKE_CMD, { timeout: 60000, windowsHide: true }, (err, stdout, stderr) => {
+      log('  唤醒命令返回: ' + (err ? 'ERR ' + err.message : 'ok') +
+          ' | out=' + String(stdout || '').trim().slice(0, 200) +
+          ' | err=' + String(stderr || '').trim().slice(0, 200));
+    });
+    if (child && typeof child.on === 'function') {
+      child.on('error', (e) => log('  唤醒命令启动失败(异步 error 事件，已吞掉不崩): ' + e.message));
+    }
+  } catch (e) {
+    spawnError = String(e && e.message || e);
+    log('  唤醒命令无法启动(同步异常，已捕获不崩): ' + spawnError);
+  }
+  return { fired: true, reason: reason, spawn_error: spawnError };
 }
 
 function readBody(req) {
@@ -64,7 +113,9 @@ const server = http.createServer(async (req, res) => {
     // 语义分层（R1154 修正）：/healthz = 「本服务活着吗」-> 只要进程在听就 200；
     // 上游是否就绪放 ready 字段。否则 keeper/post-deploy 会把「还没上报上游」误判成 DOWN 反复重启。
     const up = upstream();
-    const body = { ok: true, ready: !!up, upstream: up || null, updated_at: st.updated_at || null, port: PORT, ts: new Date().toISOString() };
+    const w = loadWake();
+    const body = { ok: true, ready: !!up, upstream: up || null, updated_at: st.updated_at || null, port: PORT, ts: new Date().toISOString(),
+      wake: { configured: !!WAKE_CMD, min_interval_s: WAKE_MIN, last_at: w.last_at || null, last_reason: w.reason || null } };
     if (up) {
       try {
         const r = await fetch(up + '/healthz', { signal: AbortSignal.timeout(8000) });
@@ -93,8 +144,21 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: true, url: url, changed: changed }));
   }
 
+  if (p === '/wake' && req.method === 'POST') {
+    if (SELF_KEY && String(req.headers['x-self-key'] || '') !== SELF_KEY) {
+      res.writeHead(401, { 'content-type': 'application/json' }); return res.end('{"ok":false,"error":"bad self key"}');
+    }
+    const r = maybeWake('manual-api', true);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify(Object.assign({ ok: true, configured: !!WAKE_CMD }, r)));
+  }
+
   const up = upstream();
-  if (!up) { res.writeHead(503, { 'content-type': 'application/json' }); return res.end('{"ok":false,"error":"no upstream registered yet (自建机还没上报地址)"}'); }
+  if (!up) {
+    const w = maybeWake('no-upstream');
+    res.writeHead(503, { 'content-type': 'application/json' });
+    return res.end(JSON.stringify({ ok: false, error: '上游未注册（自建机可能已关机/未上报）', wake: w }));
+  }
 
   const target = up + req.url;
   const h = {};
@@ -113,10 +177,11 @@ const server = http.createServer(async (req, res) => {
     if (!r.body) return res.end();
     Readable.fromWeb(r.body).pipe(res);
   } catch (e) {
+    const w = maybeWake('proxy-failed');
     res.writeHead(502, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: false, error: 'upstream unreachable: ' + e.message, upstream: up }));
+    res.end(JSON.stringify({ ok: false, error: 'upstream unreachable: ' + e.message, upstream: up, wake: w }));
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => log('h3-local-relay 启动 http://127.0.0.1:' + PORT + '  上游=' + (upstream() || '(未上报)') + '  selfKey=' + (SELF_KEY ? 'set' : 'EMPTY')));
+server.listen(PORT, '127.0.0.1', () => log('h3-local-relay 启动 http://127.0.0.1:' + PORT + '  上游=' + (upstream() || '(未上报)') + '  selfKey=' + (SELF_KEY ? 'set' : 'EMPTY') + '  wake=' + (WAKE_CMD ? 'set(' + WAKE_MIN + 's)' : 'OFF')));
 process.on('SIGTERM', () => process.exit(0));
