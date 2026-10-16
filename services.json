@@ -114,9 +114,10 @@
         "TW_LOG": "C:\\yunshudu\\logs\\cloudflared.err.log",
         "TW_STATE": "C:\\yunshudu\\state\\tunnel-url.txt",
         "TW_API": "http://127.0.0.1:3000",
-        "TW_INTERVAL": "20"
+        "TW_INTERVAL": "20",
+        "TW_FIXED": "https://api.qingzhou.autos"
       },
-      "note": "每 20s 扫 cloudflared 日志抓临时域名 -> 写 state\\tunnel-url.txt + 同步站点 ServerAddress（密码从 secrets.txt 的 ADMIN_PASSWORD 读，不入库）",
+      "note": "每 20s 扫 cloudflared 日志抓临时域名 -> 写 state\\tunnel-url.txt + 同步站点 ServerAddress（密码从 secrets.txt 的 ADMIN_PASSWORD 读，不入库） R1180: 增加 TW_FIXED=https://api.qingzhou.autos，ServerAddress 锁固定域名，不再被临时隧道带跑。",
       "health": {
         "kind": "file",
         "path": "C:\\yunshudu\\state\\tunnel-url.txt",

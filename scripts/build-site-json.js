@@ -66,7 +66,16 @@ function normSnap(o) {
 
   let channels = [];
   try {
-    const db = new DatabaseSync(path.join(ROOT, 'runtime', 'data', 'one-api.db'), { readOnly: true });
+    const DB_CANDIDATES = [
+      process.env.SITE_DB,
+      path.join(ROOT, 'data', 'one-api.db'),
+      path.join(ROOT, 'runtime', 'data', 'one-api.db'),
+      path.join(ROOT, '..', 'data', 'one-api.db'),
+      'C:\\yunshudu\\data\\one-api.db'
+    ].filter(Boolean);
+    const dbPath = DB_CANDIDATES.find((x) => { try { return fs.existsSync(x); } catch (e) { return false; } }) || DB_CANDIDATES[1];
+    const db = new DatabaseSync(dbPath, { readOnly: true });
+    console.log('[db] ' + dbPath);
     const rows = db.prepare('SELECT id, name, type, base_url, models, status, priority, weight, auto_ban, key FROM channels ORDER BY id').all();
     channels = rows.map(c => ({
       id: c.id,

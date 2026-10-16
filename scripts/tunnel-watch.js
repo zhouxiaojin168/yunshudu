@@ -29,6 +29,9 @@ const API = String(process.env.TW_API || 'http://127.0.0.1:3000').replace(/\/+$/
 const USER = process.env.TW_USER || 'root';
 const INTERVAL = Math.max(5, Number(process.env.TW_INTERVAL || 20));
 const SET_ADDR = process.env.TW_SET_SERVER_ADDRESS !== '0';
+// TW_FIXED: 站点固定域名。设了它之后，ServerAddress 永远锁在该域名，
+//           不再跟随 cloudflared 临时隧道域名（临时域名重启就变，会把站点地址改坏）。
+const FIXED = String(process.env.TW_FIXED || '').trim().replace(/\/+$/, '');
 const ONCE = process.argv.indexOf('--once') >= 0;
 
 let bomDone = false;
@@ -122,27 +125,41 @@ async function setServerAddress(url) {
 }
 
 let last = '';
+let lastFixed = '';
 let missCount = 0;
 
 async function tick() {
   const url = sniffUrl();
-  if (!url) {
+  if (url) {
+    missCount = 0;
+    if (url !== last) {
+      last = url;
+      if (writeState(url)) log('quick tunnel url = ' + url + ' (written to ' + STATE + ')');
+    } else {
+      touchState();
+    }
+  } else {
     missCount++;
     if (missCount === 1 || missCount % 15 === 0) log('no tunnel url yet in ' + LOGF + ' (miss=' + missCount + ')');
+  }
+
+  // 固定域名优先：临时隧道怎么变都不动 ServerAddress
+  if (FIXED) {
+    if (FIXED !== lastFixed) {
+      lastFixed = FIXED;
+      await setServerAddress(FIXED);
+    }
     return;
   }
-  missCount = 0;
+
+  if (!url) return;
   if (url !== last) {
-    last = url;
-    if (writeState(url)) log('tunnel url = ' + url + ' (written to ' + STATE + ')');
     await setServerAddress(url);
-  } else {
-    touchState();
   }
 }
 
 async function main() {
-  log('tunnel-watch start log=' + LOGF + ' state=' + STATE + ' api=' + API + ' interval=' + INTERVAL + 's setAddr=' + SET_ADDR);
+  log('tunnel-watch start log=' + LOGF + ' state=' + STATE + ' api=' + API + ' interval=' + INTERVAL + 's setAddr=' + SET_ADDR + ' fixed=' + (FIXED || '(none)'));
   await tick();
   if (ONCE) {
     if (!last) { log('--once: no url found'); process.exit(1); }
