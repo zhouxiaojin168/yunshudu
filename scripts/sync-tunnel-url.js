@@ -23,7 +23,7 @@ if (argv.includes('--clear')) {
 } else {
   if (!fs.existsSync(URLF)) { console.error('缺少 ' + URLF + '，先跑 scripts/start-public-gateway.ps1'); process.exit(1); }
   url = fs.readFileSync(URLF, 'utf8').replace(/^\uFEFF/, '').trim().replace(/\/+$/, '');
-  if (!/^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/.test(url)) { console.error('隧道地址格式不对: ' + url); process.exit(1); }
+  if (url && !/^https:\/\/[a-z0-9][a-z0-9.-]*$/.test(url)) { console.error('API_BASE 格式不对(需 https://域名): ' + url); process.exit(1); }
 }
 
 const html = fs.readFileSync(IDX, 'utf8');
