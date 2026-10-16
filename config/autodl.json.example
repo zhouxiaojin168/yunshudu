@@ -1,0 +1,21 @@
+{
+  "$comment": "自建 4090D 实例的电源管理配置。复制成 C:\\yunshudu\\config\\autodl.json 填好再 enabled:true。",
+  "$why": "AutoDL 按小时计费（本机 ¥2.93/h），没人用的时候自动关机 = 直接省钱。",
+  "enabled": false,
+  "dry_run": true,
+  "api_base": "https://api.autodl.com",
+  "instance_uuid": "",
+  "token_file": "C:\\yunshudu\\secrets\\autodl-token.txt",
+  "idle_minutes": 30,
+  "check_interval_sec": 300,
+  "cooldown_minutes": 20,
+  "h3_base": "https://h3.qingzhou.autos",
+  "relay_health": "http://127.0.0.1:9123/healthz",
+  "h3_hourly_cny": 2.93,
+  "endpoints": {
+    "$comment": "AutoDL 开放 API 路径；以官方文档 https://www.autodl.com/docs/openapi/ 为准，有出入改这里即可。",
+    "list": "/api/v1/instance",
+    "start": "/api/v1/instance/{uuid}/start",
+    "shutdown": "/api/v1/instance/{uuid}/shutdown"
+  }
+}
