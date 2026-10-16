@@ -195,7 +195,7 @@ async function selftest() {
     return;
   }
   if (cmd === 'watchdog') {
-    api.log(cfg, '=== h3-power 看门狗启动 === enabled=' + cfg.enabled + ' dry_run=' + cfg.dry_run
+    api.log(cfg, '=== h3-power 看门狗启动 === enabled=' + cfg.enabled + ' dry_run=' + cfg.dry_run + ' localCfg=' + (cfg.local_cfg_path || '(none)')
       + ' uuid=' + (cfg.instance_uuid || 'EMPTY') + ' token=' + (api.getToken(cfg) ? 'set' : 'EMPTY')
       + ' idle=' + cfg.idle_minutes + 'min poll=' + cfg.check_interval_sec + 's cooldown=' + cfg.cooldown_minutes + 'min once=' + once);
     if (!cfg.instance_uuid) api.log(cfg, '!! instance_uuid 为空 —— 请先在 config/autodl.json 填好');

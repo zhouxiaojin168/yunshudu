@@ -58,7 +58,8 @@ function loadCfg() {
   cfg.cfg_path = p || '(none)';
   // ★ R1187: app\ 目录每次部署会被 robocopy /MIR 覆盖 -> 「武装开关」必须放在部署范围之外。
   //   这里再叠加 C:\yunshudu\secrets\autodl.local.json（存在即生效），改它不会被部署冲掉。
-  const localCfg = path.join(ROOT, 'secrets', 'autodl.local.json');
+  //   路径取 token_file 的同级目录（= C:\yunshudu\secrets），不依赖 ROOT 层级，robocopy /MIR 也碰不到。
+  const localCfg = process.env.AUTODL_LOCAL_CFG || path.join(path.dirname(String(cfg.token_file || path.join(ROOT, 'secrets', 'x'))), 'autodl.local.json');
   if (fs.existsSync(localCfg)) {
     try { Object.assign(cfg, JSON.parse(fs.readFileSync(localCfg, 'utf8'))); cfg.local_cfg_path = localCfg; } catch (e) { cfg.local_cfg_error = e.message; }
   }
