@@ -81,6 +81,17 @@ async function cycle(cfg) {
     + ' idle=' + s.idle_s + 's(阈值' + idleMinS + 's) req_count=' + s.req_count + ' 在算=' + s.busy
     + (s.why.length ? '  :: ' + s.why.join(' | ') : '');
 
+  // —— ⓪ 保活：AutoDL 官方规则「连续关机 15 天释放实例（数据全部清空、不可恢复）」
+  //     所以自动关机必须配一个"最长连关天数"，到点强制开一次机把计时器打回 0。
+  if (s.reachable && !s.upstream_ok) { if (!ACT.first_off_at) { ACT.first_off_at = new Date().toISOString(); api.log(cfg, '记录本次"观察到关机"起点: ' + ACT.first_off_at); } }
+  else if (s.upstream_ok && ACT.first_off_at) { api.log(cfg, '机器已开机 -> 清空关机起点（保活计时归零）'); ACT.first_off_at = null; }
+  const offDays = ACT.first_off_at ? (Date.now() - Date.parse(ACT.first_off_at)) / 86400000 : 0;
+  if (s.reachable && !s.upstream_ok && offDays >= Number(cfg.max_off_days || 13)) {
+    api.log(cfg, line + '  -> ★ 已连续关机 ' + offDays.toFixed(2) + ' 天(上限 ' + (cfg.max_off_days || 13) + ' 天)，保活开机（防 AutoDL 15 天释放实例）');
+    if (!cfg.enabled || cfg.dry_run) { api.log(cfg, '   未放开(disabled/dry_run) -> 只记日志；请尽快手动开机保活'); ACT.last_kind = 'on(keepalive,dry)'; saveState(cfg); return; }
+    else { const r = await api.powerOn(cfg); ACT = { last_at: nowSec(), last_kind: 'on(keepalive)', last_ok: r.ok, idle_since: 0, first_off_at: null }; saveState(cfg); return; }
+  }
+
   // —— ② 有人在用但机器不在 -> 尝试开机
   if (s.reachable && !s.upstream_ok && s.idle_s !== null && s.idle_s < 300) {
     if (!cooled) { api.log(cfg, line + '  -> 需要开机但冷却中(' + Math.round(nowSec() - ACT.last_at) + 's)'); saveState(cfg); return; }
@@ -120,13 +131,14 @@ async function selftest() {
     let body;
     if (mode === 'idle-long') body = { upstream_health: 200, idle_s: 999999, req_count: 3, upstream_body: JSON.stringify({ queue: 0, comfy_queue: { running: 0, pending: 0 } }) };
     else if (mode === 'busy') body = { upstream_health: 200, idle_s: 2, req_count: 4, upstream_body: JSON.stringify({ queue: 1, comfy_queue: { running: 1, pending: 0 } }) };
+    else if (mode === 'down-quiet') body = { upstream_health: 'ERR x', idle_s: 100000, req_count: 9, upstream_body: null };
     else body = { upstream_health: 'ERR x', idle_s: 5, req_count: 9, upstream_body: null };
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body));
   });
   await new Promise(r => srv.listen(port, '127.0.0.1', r));
   const cfg = {
     enabled: true, dry_run: true, relay_health: 'http://127.0.0.1:' + port + '/healthz',
-    idle_minutes: 15, cooldown_minutes: 20, h3_hourly_cny: 2.93,
+    idle_minutes: 15, cooldown_minutes: 20, h3_hourly_cny: 2.93, max_off_days: 13,
     log_file: path.join(tmp, 'p.log'), state_file: path.join(tmp, 'p.json'), instance_uuid: 'SELFTEST',
     endpoints: { start: 'x', shutdown: 'x' },
   };
@@ -138,6 +150,10 @@ async function selftest() {
   await cycle(cfg); rec('b) 在算 -> 不关机', ACT.last_kind === '');
   mode = 'down'; ACT = { last_at: 0, last_kind: '', last_ok: null, idle_since: 0 };
   await cycle(cfg); rec('c) 上游不可达+刚有请求 -> 走开机分支(dry)', String(ACT.last_kind).indexOf('on') === 0);
+  mode = 'down-quiet'; ACT = { last_at: 0, last_kind: 'off', last_ok: true, idle_since: 0, first_off_at: new Date(Date.now() - 14 * 86400000).toISOString() };
+  await cycle(cfg); rec('f) 连续关机超上限(14天>13天) -> 保活开机(dry)', ACT.last_kind === 'on(keepalive,dry)');
+  mode = 'down-quiet'; ACT = { last_at: 0, last_kind: 'off', last_ok: true, idle_since: 0, first_off_at: new Date(Date.now() - 2 * 86400000).toISOString() };
+  await cycle(cfg); rec('g) 关机2天(未超上限)且无调用 -> 不动', ACT.last_kind === 'off');
   const lg = fs.readFileSync(cfg.log_file, 'utf8');
   rec('d) 日志里明确写了 dry-run 不真执行', /dry_run=true -> 只记日志/.test(lg));
   rec('e) 状态文件落盘', fs.existsSync(cfg.state_file));

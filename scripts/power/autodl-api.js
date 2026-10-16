@@ -30,6 +30,7 @@ const DEFAULTS = {
   api_base: 'https://www.autodl.com',
   instance_uuid: '',
   token_file: path.join(ROOT, 'secrets', 'autodl-token.txt'),
+  max_off_days: 13,
   idle_minutes: 30,
   check_interval_sec: 300,
   cooldown_minutes: 20,
@@ -58,6 +59,7 @@ function loadCfg() {
   if (process.env.AUTODL_TOKEN) cfg.token = process.env.AUTODL_TOKEN;
   if (process.env.AUTODL_UUID) cfg.instance_uuid = process.env.AUTODL_UUID;
   if (process.env.AUTODL_BASE) cfg.api_base = process.env.AUTODL_BASE;
+  if (process.env.AUTODL_MAX_OFF_DAYS) cfg.max_off_days = Number(process.env.AUTODL_MAX_OFF_DAYS);
   if (process.env.AUTODL_IDLE_MIN) cfg.idle_minutes = Number(process.env.AUTODL_IDLE_MIN);
   if (process.env.AUTODL_DRYRUN === '0') cfg.dry_run = false;
   cfg.api_base = String(cfg.api_base || '').replace(/\/+$/, '');

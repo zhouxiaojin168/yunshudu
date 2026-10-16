@@ -1,6 +1,8 @@
 {
   "$comment": "自建 4090D 实例的电源管理配置（R1187）。本机在用的实配（安全默认：enabled=false / dry_run=true，只记日志不真开关机）。",
   "$why": "AutoDL 按小时计费（本机 ¥2.93/h），没人用的时候自动关机 = 直接省钱；有人调用再自动开机。",
+  "$rules": "AutoDL 官方规则（docs/instance_data + docs/local_disk 实读）：① 实例在数据在，开关机不影响数据，但【连续关机 15 天会释放实例、数据全部清空且不可恢复】-> 所以 max_off_days=13 时必须保活开机一次；② 按量实例的数据盘按当天最大容量 24 点计费（约 0.0066 元/日/GB，有 50GB 免费额度），无论当天是否关机；③ 按量实例关机后 GPU 不预留（包年包月才预留），开机要重新调度 —— 原主机有卡就秒开，无卡则要等/迁移。",
+  "max_off_days": 13,
   "enabled": false,
   "dry_run": true,
   "api_base": "https://www.autodl.com",
