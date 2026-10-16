@@ -52,6 +52,9 @@ function save(o) {
   try { fs.mkdirSync(path.dirname(STATE), { recursive: true }); fs.writeFileSync(STATE, JSON.stringify(o, null, 2), 'utf8'); } catch (e) {}
 }
 let st = load();
+// ★ R1187 运行指标：给「空闲自动关机看门狗」用——最后一次被请求的时间
+let lastReqAt = 0;
+let reqCount = 0;
 function upstream() { return String(st.url || FALLBACK || '').replace(/\/+$/, ''); }
 
 function log(l) {
@@ -115,6 +118,9 @@ const server = http.createServer(async (req, res) => {
     const up = upstream();
     const w = loadWake();
     const body = { ok: true, ready: !!up, upstream: up || null, updated_at: st.updated_at || null, port: PORT, ts: new Date().toISOString(),
+      idle_s: lastReqAt ? Math.round((Date.now() - lastReqAt) / 1000) : null,
+      last_req_at: lastReqAt ? new Date(lastReqAt).toISOString() : null,
+      req_count: reqCount,
       wake: { configured: !!WAKE_CMD, min_interval_s: WAKE_MIN, last_at: w.last_at || null, last_reason: w.reason || null } };
     if (up) {
       try {
@@ -160,6 +166,7 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify({ ok: false, error: '上游未注册（自建机可能已关机/未上报）', wake: w }));
   }
 
+  lastReqAt = Date.now(); reqCount++;
   const target = up + req.url;
   const h = {};
   for (const k of ['authorization', 'content-type', 'range', 'accept', 'user-agent', 'x-admin-key']) {

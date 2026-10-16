@@ -1,21 +1,30 @@
 {
-  "$comment": "自建 4090D 实例的电源管理配置。复制成 C:\\yunshudu\\config\\autodl.json 填好再 enabled:true。",
-  "$why": "AutoDL 按小时计费（本机 ¥2.93/h），没人用的时候自动关机 = 直接省钱。",
+  "$comment": "自建 4090D 实例的电源管理配置（R1187）。复制成 C:\\yunshudu\\config\\autodl.json 填 token_file 并放开 enabled/dry_run。",
+  "$why": "AutoDL 按小时计费（本机 ¥2.93/h），没人用的时候自动关机 = 直接省钱；有人调用再自动开机。",
   "enabled": false,
   "dry_run": true,
-  "api_base": "https://api.autodl.com",
-  "instance_uuid": "",
+  "api_base": "https://www.autodl.com",
+  "instance_uuid": "bede4a8dde-6e7609ea",
   "token_file": "C:\\yunshudu\\secrets\\autodl-token.txt",
   "idle_minutes": 30,
   "check_interval_sec": 300,
   "cooldown_minutes": 20,
-  "h3_base": "https://h3.qingzhou.autos",
   "relay_health": "http://127.0.0.1:9123/healthz",
   "h3_hourly_cny": 2.93,
+  "log_file": "C:\\yunshudu\\logs\\h3-power.log",
+  "state_file": "C:\\yunshudu\\state\\h3-power.json",
   "endpoints": {
-    "$comment": "AutoDL 开放 API 路径；以官方文档 https://www.autodl.com/docs/openapi/ 为准，有出入改这里即可。",
-    "list": "/api/v1/instance",
-    "start": "/api/v1/instance/{uuid}/start",
-    "shutdown": "/api/v1/instance/{uuid}/shutdown"
+    "$comment": "AutoDL 控制台真实端点（逆向自 www.autodl.com/assets/instance.4daa8be5.js，非官方文档）。",
+    "list": "api/v1/instance",
+    "start": "api/v1/instance/power_on",
+    "shutdown": "api/v1/instance/power_off",
+    "restart": "api/v1/instance/restart",
+    "detail": "api/v1/instance/detail",
+    "monitor": "api/v1/instance/monitor",
+    "timedShutdown": "api/v1/instance/timed/shutdown"
+  },
+  "auth": {
+    "$comment": "请求头 Authorization = 在 www.autodl.com 登录后 localStorage.getItem('token') 的值；另有 AppVersion 头（本脚本已固定 0.0.0）。token 过期表现为 {\"code\":\"AuthorizeFailed\"}，重新取一次覆盖 token_file 即可。",
+    "header": "Authorization"
   }
 }

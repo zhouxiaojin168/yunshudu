@@ -462,7 +462,9 @@
       "env": {
         "H3R_PORT": "9123",
         "H3R_STATE": "C:\\yunshudu\\state\\h3-local.json",
-        "H3R_UPSTREAM": ""
+        "H3R_UPSTREAM": "",
+        "H3R_WAKE_CMD": "C:\\yunshudu\\node-v22.23.3\\node.exe C:\\yunshudu\\app\\scripts\\power\\h3-power.js on",
+        "H3R_WAKE_MIN_INTERVAL": "600"
       },
       "envFrom": {
         "H3R_SELF_KEY": "H3_RELAY_SELF_KEY"
@@ -475,7 +477,35 @@
         "retries": 10,
         "intervalSec": 2
       },
-      "note": "自建 4090D H3 算力的稳定入口：本地固定 9123，上游地址由自建机 POST /self 上报并自动跟随（隧道换址不断线）。new-api 渠道 base_url 指这里；外网取片走 edge 路由 /h3。",
+      "note": "自建 4090D H3 算力的稳定入口：本地固定 9123，上游地址由自建机 POST /self 上报并自动跟随（隧道换址不断线）。new-api 渠道 base_url 指这里；外网取片走 edge 路由 /h3。R1187: 上游不可用(503/502)时会执行 H3R_WAKE_CMD 尝试开机（节流 600s，实际是否真开机由 h3-power.js 的 enabled/dry_run 决定）。/healthz 增 idle_s / last_req_at / req_count 给看门狗用。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "h3-power",
+      "type": "node",
+      "task": "yunshudu-h3-power",
+      "managed": "auto",
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\power\\h3-power.js",
+      "scriptArgs": [
+        "watchdog"
+      ],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "h3-power"
+      ],
+      "env": {},
+      "health": {
+        "kind": "file",
+        "path": "C:\\yunshudu\\state\\h3-power.json",
+        "maxAgeSec": 900,
+        "retries": 10,
+        "intervalSec": 3
+      },
+      "note": "自建 4090D 的电源看门狗（R1187）：闲够 config\\autodl.json 的 idle_minutes -> 调 AutoDL power_off；上游不可达而 relay 最近有请求 -> power_on。默认 enabled=false / dry_run=true 只记日志；AutoDL 控制台 API 走 api/v1/instance/power_on|power_off，鉴权头 Authorization=浏览器 localStorage.token（放 C:\\yunshudu\\secrets\\autodl-token.txt）。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
