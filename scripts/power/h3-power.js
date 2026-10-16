@@ -27,6 +27,7 @@ const api = require('./autodl-api.js');
 const argv = process.argv.slice(2);
 const cmd = argv[0] || 'help';
 const once = argv.includes('--once');
+const FORCE = argv.includes('--force');   // 手动 on/off 时无视 enabled/dry_run 闸门（仍需 token）
 
 let ACT = { last_at: 0, last_kind: '', last_ok: null, idle_since: 0 };
 let procStart = Date.now();
@@ -168,7 +169,7 @@ async function selftest() {
 (async () => {
   const cfg = api.loadCfg();
   if (cmd === 'help') {
-    console.log('用法: status | list | on | off | watchdog [--once] | selftest');
+    console.log('用法: status | list | on | off | watchdog [--once] | selftest   （手动 on/off 可加 --force 无视自动开关闸门）');
     console.log('配置: ' + cfg.cfg_path + '  token=' + (api.getToken(cfg) ? 'set' : 'EMPTY') + '  uuid=' + (cfg.instance_uuid || 'EMPTY'));
     return;
   }
@@ -189,7 +190,8 @@ async function selftest() {
   if (cmd === 'on' || cmd === 'off') {
     api.log(cfg, '=== 手动 ' + cmd + ' ===  enabled=' + cfg.enabled + ' dry_run=' + cfg.dry_run + ' uuid=' + cfg.instance_uuid + ' token=' + (api.getToken(cfg) ? 'set' : 'EMPTY'));
     if (!api.getToken(cfg)) { api.log(cfg, '!! 没有 token -> 什么都不会发生（去 www.autodl.com 登录后取 localStorage.token）'); process.exitCode = 2; return; }
-    if (!cfg.enabled || cfg.dry_run) { api.log(cfg, '   enabled/dry_run 未放开 -> 只记日志；要真执行：AUTODL_DRYRUN=0 且配置 enabled=true, dry_run=false'); return; }
+    if ((!cfg.enabled || cfg.dry_run) && !FORCE) { api.log(cfg, '   enabled/dry_run 未放开 -> 只记日志（手动执行想强制执行：加 --force）'); return; }
+    if (FORCE && (!cfg.enabled || cfg.dry_run)) api.log(cfg, '   --force 生效：无视 enabled/dry_run 闸门，直接执行');
     const r = cmd === 'on' ? await api.powerOn(cfg) : await api.powerOff(cfg);
     process.exitCode = r.ok ? 0 : 1;
     return;
