@@ -61,10 +61,18 @@ const server = http.createServer(async (req, res) => {
   const p = u.pathname;
 
   if (p === '/healthz') {
+    // 语义分层（R1154 修正）：/healthz = 「本服务活着吗」-> 只要进程在听就 200；
+    // 上游是否就绪放 ready 字段。否则 keeper/post-deploy 会把「还没上报上游」误判成 DOWN 反复重启。
     const up = upstream();
-    const body = { ok: !!up, upstream: up || null, updated_at: st.updated_at || null, port: PORT, ts: new Date().toISOString() };
-    if (up) { try { const r = await fetch(up + '/healthz', { signal: AbortSignal.timeout(8000) }); body.upstream_health = r.status; body.upstream_body = (await r.text()).slice(0, 400); } catch (e) { body.upstream_health = 'ERR ' + e.message; } }
-    res.writeHead(body.ok ? 200 : 503, { 'content-type': 'application/json' });
+    const body = { ok: true, ready: !!up, upstream: up || null, updated_at: st.updated_at || null, port: PORT, ts: new Date().toISOString() };
+    if (up) {
+      try {
+        const r = await fetch(up + '/healthz', { signal: AbortSignal.timeout(8000) });
+        body.upstream_health = r.status;
+        body.upstream_body = (await r.text()).slice(0, 400);
+      } catch (e) { body.upstream_health = 'ERR ' + e.message; }
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
     return res.end(JSON.stringify(body));
   }
 
