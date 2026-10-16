@@ -176,6 +176,14 @@ const server = http.createServer(async (req, res) => {
   if (req.method !== 'GET' && req.method !== 'HEAD') { init.body = req; init.duplex = 'half'; }
   try {
     const r = await fetch(target, init);
+    // ★ R1187 实测坑：cloudflared 隧道死了会返回 **520~530 的 HTML 错误页**（HTTP 层面是"成功响应"），
+    //   旧逻辑把它当正常响应透传，导致「有人调用」根本触发不了唤醒。必须识别成上游不可用。
+    if (r.status >= 520 && r.status <= 530) {
+      const w = maybeWake('upstream-tunnel-error-' + r.status);
+      try { await r.text(); } catch (e) {}
+      res.writeHead(503, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ ok: false, error: 'upstream tunnel error ' + r.status + '（自建机可能已关机/隧道已断）', upstream: up, wake: w }));
+    }
     const out = { 'content-type': r.headers.get('content-type') || 'application/octet-stream', 'cache-control': 'no-store' };
     for (const k of ['content-length', 'content-range', 'accept-ranges', 'content-disposition']) {
       const v = r.headers.get(k); if (v) out[k] = v;

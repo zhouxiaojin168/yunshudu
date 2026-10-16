@@ -56,6 +56,12 @@ function loadCfg() {
   const cfg = Object.assign({}, DEFAULTS, f);
   cfg.endpoints = Object.assign({}, DEFAULTS.endpoints, f.endpoints || {});
   cfg.cfg_path = p || '(none)';
+  // ★ R1187: app\ 目录每次部署会被 robocopy /MIR 覆盖 -> 「武装开关」必须放在部署范围之外。
+  //   这里再叠加 C:\yunshudu\secrets\autodl.local.json（存在即生效），改它不会被部署冲掉。
+  const localCfg = path.join(ROOT, 'secrets', 'autodl.local.json');
+  if (fs.existsSync(localCfg)) {
+    try { Object.assign(cfg, JSON.parse(fs.readFileSync(localCfg, 'utf8'))); cfg.local_cfg_path = localCfg; } catch (e) { cfg.local_cfg_error = e.message; }
+  }
   if (process.env.AUTODL_TOKEN) cfg.token = process.env.AUTODL_TOKEN;
   if (process.env.AUTODL_UUID) cfg.instance_uuid = process.env.AUTODL_UUID;
   if (process.env.AUTODL_BASE) cfg.api_base = process.env.AUTODL_BASE;
