@@ -42,7 +42,16 @@
     "MiniMax-H3": {
       "ratio": 1,
       "price": 0.001,
-      "note": "≈500 算力/次"
+      "note": "≈500 算力/次",
+      "billing": {
+        "mode": "tiered_expr",
+        "exprFile": "config/h3-billing.json",
+        "ladder": {
+          "<=6s": 0.0034,
+          "<=10s": 0.003,
+          ">10s": 0.0026
+        }
+      }
     },
     "H3-Max": {
       "ratio": 1,
@@ -98,5 +107,6 @@
       "enabled": true,
       "sort_order": 20
     }
-  ]
+  ],
+  "$billing": "按 length 分档的真实计费在 config/h3-billing.json（billing_setting.billing_expr 表达式），由 scripts/set-h3-billing.js 应用；本文件的 price 只是 ModelPrice 兜底/展示口径。"
 }

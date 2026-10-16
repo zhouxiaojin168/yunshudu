@@ -1,0 +1,19 @@
+{
+  "$comment": "H3 按 length（秒）分档计费。new-api 的按次计费(ModelPrice)对视频只能一口价；按档要写 billing 表达式。",
+  "$apply": "部署到服务器后执行：node app\\scripts\\set-h3-billing.js   （幂等，可反复跑）",
+  "$syntax": "tier(档位名, 表达式)；u(\"字段\") 取插件上报的用量；价格单位 USD；1 USD = QuotaPerUnit(500000) 算力",
+  "$verified": "2026-10-17 实测：seconds=4 → 预扣 6800 / 实际 3.75s → 结算 6375（退还 425），与 3.75×0.0034×500000 分毫不差",
+  "models": {
+    "MiniMax-H3": {
+      "mode": "tiered_expr",
+      "expr": "u(\"seconds\") <= 6 ? tier(\"H3-6s\", u(\"seconds\") * 0.0034) : (u(\"seconds\") <= 10 ? tier(\"H3-10s\", u(\"seconds\") * 0.0030) : tier(\"H3-long\", u(\"seconds\") * 0.0026))",
+      "note": "≤6s 0.0034 USD/秒 · ≤10s 0.0030 · >10s 0.0026；成本基线 ¥0.083/5s ≈ $0.0114，毛利约 1.5x",
+      "usageFields": [
+        "seconds",
+        "resolution",
+        "input_images",
+        "input_video_seconds"
+      ]
+    }
+  }
+}
