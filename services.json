@@ -45,7 +45,7 @@
         "EDGE_LOG_DIR": "C:\\yunshudu\\logs",
         "EDGE_RL_MAX": "1200",
         "EDGE_ACCESS_LOG": "0",
-        "EDGE_ROUTES": "/mailfarm=http://127.0.0.1:8099"
+        "EDGE_ROUTES": "/mailfarm=http://127.0.0.1:8099,/h3=http://127.0.0.1:9123"
       },
       "health": {
         "kind": "http",
@@ -440,6 +440,41 @@
         "intervalSec": 5
       },
       "note": "海外海螺(hailuoai.video)邮箱号池「调度层」：每 600s 巡检一次(额度/掉号)，存活<target(200) 自动用 h3-pool.js 并发补号；池文件 state\\h3\\h3-accounts.jsonl，状态 state\\h3\\h3-pool-state.json。注意：该池目前只产「账号外壳」，海外站新号 totalCredits=0（无新人礼），出片需另接算力来源。",
+      "restartOnDeploy": true,
+      "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
+    },
+    {
+      "name": "h3-local-relay",
+      "type": "node",
+      "task": "yunshudu-h3-relay",
+      "managed": "auto",
+      "port": 9123,
+      "critical": false,
+      "node": "node-v22.23.3\\node.exe",
+      "script": "app\\scripts\\h3-local-relay.js",
+      "scriptArgs": [],
+      "launcher": "app\\deploy\\run-service.ps1",
+      "launcherArgs": [
+        "-Name",
+        "h3-local-relay"
+      ],
+      "env": {
+        "H3R_PORT": "9123",
+        "H3R_STATE": "C:\\yunshudu\\state\\h3-local.json",
+        "H3R_UPSTREAM": ""
+      },
+      "envFrom": {
+        "H3R_SELF_KEY": "H3_RELAY_SELF_KEY"
+      },
+      "health": {
+        "kind": "http",
+        "url": "http://127.0.0.1:9123/healthz",
+        "expect": 200,
+        "timeoutSec": 5,
+        "retries": 10,
+        "intervalSec": 2
+      },
+      "note": "自建 4090D H3 算力的稳定入口：本地固定 9123，上游地址由自建机 POST /self 上报并自动跟随（隧道换址不断线）。new-api 渠道 base_url 指这里；外网取片走 edge 路由 /h3。",
       "restartOnDeploy": true,
       "restartOnDeployNote": "仓库内脚本变更后必须重启才能生效"
     }
