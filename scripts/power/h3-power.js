@@ -60,6 +60,10 @@ async function sense(cfg) {
   out.req_count = h.req_count === undefined ? null : Number(h.req_count);
   out.idle_s = (h.idle_s === null || h.idle_s === undefined) ? null : Number(h.idle_s);
   if (out.idle_s === null) out.idle_s = Math.round((Date.now() - procStart) / 1000);   // relay 从没被请求过
+  // ★ R1190：优先用「真实业务请求」的空闲秒数 biz_idle_s —— 渠道探活不再让机器永远不睡
+  out.biz_idle_s = (h.biz_idle_s === null || h.biz_idle_s === undefined) ? null : Number(h.biz_idle_s);
+  out.biz_count = (h.biz_count === undefined || h.biz_count === null) ? null : Number(h.biz_count);
+  out.use_idle_s = (out.biz_idle_s === null) ? out.idle_s : out.biz_idle_s;
 
   if (!out.upstream_ok) {
     out.why.push('上游不可达(可能已关机) upstream_health=' + JSON.stringify(h.upstream_health));
@@ -79,7 +83,7 @@ async function cycle(cfg) {
   const idleMinS = Math.max(60, Number(cfg.idle_minutes) * 60);
   const cooled = (nowSec() - ACT.last_at) >= Math.max(60, Number(cfg.cooldown_minutes) * 60);
   const line = 'sense: relay=' + (s.reachable ? 'ok' : 'DOWN') + ' 上游=' + (s.upstream_ok ? 'ok' : '不可达')
-    + ' idle=' + s.idle_s + 's(阈值' + idleMinS + 's) req_count=' + s.req_count + ' 在算=' + s.busy
+    + ' idle=' + s.use_idle_s + 's(阈值' + idleMinS + 's) req/biz=' + s.req_count + '/' + s.biz_count + ' 在算=' + s.busy
     + (s.why.length ? '  :: ' + s.why.join(' | ') : '');
 
   // —— ⓪ 保活：AutoDL 官方规则「连续关机 15 天释放实例（数据全部清空、不可恢复）」
@@ -94,7 +98,7 @@ async function cycle(cfg) {
   }
 
   // —— ② 有人在用但机器不在 -> 尝试开机
-  if (s.reachable && !s.upstream_ok && s.idle_s !== null && s.idle_s < 300) {
+  if (s.reachable && !s.upstream_ok && s.use_idle_s !== null && s.use_idle_s < 300) {
     if (!cooled) { api.log(cfg, line + '  -> 需要开机但冷却中(' + Math.round(nowSec() - ACT.last_at) + 's)'); saveState(cfg); return; }
     api.log(cfg, line + '  -> ★ 有调用且上游不可达，尝试开机');
     if (!cfg.enabled) api.log(cfg, '   enabled=false -> 只记日志（不真开机）');
@@ -105,12 +109,12 @@ async function cycle(cfg) {
 
   // —— ① 闲够时间 -> 关机
   if (s.reachable && s.upstream_ok && !s.busy) {
-    if (s.idle_s < idleMinS) {
+    if (s.use_idle_s < idleMinS) {
       api.log(cfg, line + '  -> 还没闲够，继续等');
       saveState(cfg); return;
     }
     if (!cooled) { api.log(cfg, line + '  -> 闲够但冷却中(' + Math.round(nowSec() - ACT.last_at) + 's)'); saveState(cfg); return; }
-    api.log(cfg, line + '  -> ★ 闲够 ' + s.idle_s + 's，关机（省 ¥' + cfg.h3_hourly_cny + '/h）');
+    api.log(cfg, line + '  -> ★ 闲够 ' + s.use_idle_s + 's，关机（省 ¥' + cfg.h3_hourly_cny + '/h）');
     if (!cfg.enabled) { api.log(cfg, '   enabled=false -> 只记日志（不真关机）'); ACT.last_kind = 'off(dry)'; saveState(cfg); return; }
     if (cfg.dry_run) { api.log(cfg, '   dry_run=true -> 只记日志（不真关机）'); ACT.last_kind = 'off(dry)'; saveState(cfg); return; }
     const r = await api.powerOff(cfg);
@@ -132,7 +136,9 @@ async function selftest() {
     let body;
     if (mode === 'idle-long') body = { upstream_health: 200, idle_s: 999999, req_count: 3, upstream_body: JSON.stringify({ queue: 0, comfy_queue: { running: 0, pending: 0 } }) };
     else if (mode === 'busy') body = { upstream_health: 200, idle_s: 2, req_count: 4, upstream_body: JSON.stringify({ queue: 1, comfy_queue: { running: 1, pending: 0 } }) };
-    else if (mode === 'down-quiet') body = { upstream_health: 'ERR x', idle_s: 100000, req_count: 9, upstream_body: null };
+    else if (mode === 'down-quiet') body = { upstream_health: 'ERR x', idle_s: 100000, biz_idle_s: 100000, req_count: 9, biz_count: 0, upstream_body: null };
+    else if (mode === 'probe-only') body = { upstream_health: 'ERR x', idle_s: 5, biz_idle_s: 100000, req_count: 99, biz_count: 1, upstream_body: null };
+    else if (mode === 'biz-fresh') body = { upstream_health: 'ERR x', idle_s: 5, biz_idle_s: 4, req_count: 99, biz_count: 2, upstream_body: null };
     else body = { upstream_health: 'ERR x', idle_s: 5, req_count: 9, upstream_body: null };
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body));
   });
@@ -155,6 +161,10 @@ async function selftest() {
   await cycle(cfg); rec('f) 连续关机超上限(14天>13天) -> 保活开机(dry)', ACT.last_kind === 'on(keepalive,dry)');
   mode = 'down-quiet'; ACT = { last_at: 0, last_kind: 'off', last_ok: true, idle_since: 0, first_off_at: new Date(Date.now() - 2 * 86400000).toISOString() };
   await cycle(cfg); rec('g) 关机2天(未超上限)且无调用 -> 不动', ACT.last_kind === 'off');
+  mode = 'probe-only'; ACT = { last_at: 0, last_kind: '', last_ok: null, idle_since: 0 };
+  await cycle(cfg); rec('h) 只有探活(请求很新但业务很旧) -> 不唤醒', ACT.last_kind === '');
+  mode = 'biz-fresh'; ACT = { last_at: 0, last_kind: '', last_ok: null, idle_since: 0 };
+  await cycle(cfg); rec('i) 真实业务刚来 -> 走开机分支(dry)', String(ACT.last_kind).indexOf('on') === 0);
   const lg = fs.readFileSync(cfg.log_file, 'utf8');
   rec('d) 日志里明确写了 dry-run 不真执行', /dry_run=true -> 只记日志/.test(lg));
   rec('e) 状态文件落盘', fs.existsSync(cfg.state_file));

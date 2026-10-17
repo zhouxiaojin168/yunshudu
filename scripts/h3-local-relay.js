@@ -45,6 +45,30 @@ const WAKE_CMD = String(process.env.H3R_WAKE_CMD || '');
 const WAKE_MIN = Math.max(30, Number(process.env.H3R_WAKE_MIN_INTERVAL || 600));
 const WAKE_STATE = process.env.H3R_WAKE_STATE || path.join(ROOT, 'state', 'h3-wake.json');
 
+// ★ R1190 唤醒判定：只有「真实业务请求」才叫醒自建机。
+//   背景：new-api 会周期性探活渠道 #9（GET /v1/models 之类），旧逻辑把它当「有人调用」->
+//   机器被反复叫醒 / 开了就再也睡不着。判定规则可配，默认：POST|PUT + 带 Bearer + 非 /v1/models。
+const WAKE_REQUIRE_AUTH = String(process.env.H3R_WAKE_REQUIRE_AUTH || '1') !== '0';
+const WAKE_METHODS = String(process.env.H3R_WAKE_METHODS || 'POST,PUT')
+  .toUpperCase().split(',').map(s => s.trim()).filter(Boolean);
+const WAKE_DENY_PREFIX = String(process.env.H3R_WAKE_DENY_PREFIX || '/v1/models,/v1/health,/healthz,/self,/wake,/v1/internal')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const LOG_REQ = String(process.env.H3R_LOG_REQ || '1') !== '0';
+
+function wakeEligible(req, p) {
+  const method = String(req.method || '').toUpperCase();
+  if (!WAKE_METHODS.includes(method)) return { ok: false, why: 'method:' + method };
+  if (WAKE_REQUIRE_AUTH) {
+    const a = String(req.headers['authorization'] || '');
+    if (!/^Bearer\s+\S{8,}/i.test(a)) return { ok: false, why: 'no-auth' };
+  }
+  for (const pre of WAKE_DENY_PREFIX) {
+    if (p === pre || p.startsWith(pre + '/')) return { ok: false, why: 'deny-path:' + p };
+  }
+  return { ok: true, why: 'business' };
+}
+
+
 function load() {
   try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch (e) { return {}; }
 }
@@ -55,6 +79,9 @@ let st = load();
 // ★ R1187 运行指标：给「空闲自动关机看门狗」用——最后一次被请求的时间
 let lastReqAt = 0;
 let reqCount = 0;
+// ★ R1190 业务指标：只统计「真实业务请求」（探活不计），供看门狗判断是否该睡/该醒
+let lastBizAt = 0;
+let bizCount = 0;
 function upstream() { return String(st.url || FALLBACK || '').replace(/\/+$/, ''); }
 
 function log(l) {
@@ -67,8 +94,13 @@ function loadWake() { try { return JSON.parse(fs.readFileSync(WAKE_STATE, 'utf8'
 function saveWake(o) { try { fs.mkdirSync(path.dirname(WAKE_STATE), { recursive: true }); fs.writeFileSync(WAKE_STATE, JSON.stringify(o, null, 2), 'utf8'); } catch (e) {} }
 
 /** 有人调用但上游不可用 -> 尝试唤醒自建机；带最小间隔节流，避免刷爆。 */
-function maybeWake(reason, force) {
+function maybeWake(reason, force, esc) {
   const now = Date.now();
+  // ★ R1190：非业务请求（探活/模型列表/健康检查）一律不许叫醒机器
+  if (!force && esc && esc.ok === false) {
+    log('wake 跳过(' + reason + ') -> 非业务请求: ' + esc.why);
+    return { fired: false, reason: 'not-business', skip: esc.why };
+  }
   if (!WAKE_CMD) {
     log('wake 未配置(' + reason + ') -> 仅提示：上游不可用');
     return { fired: false, reason: 'not-configured' };
@@ -121,6 +153,9 @@ const server = http.createServer(async (req, res) => {
       idle_s: lastReqAt ? Math.round((Date.now() - lastReqAt) / 1000) : null,
       last_req_at: lastReqAt ? new Date(lastReqAt).toISOString() : null,
       req_count: reqCount,
+      biz_idle_s: lastBizAt ? Math.round((Date.now() - lastBizAt) / 1000) : null,
+      last_biz_at: lastBizAt ? new Date(lastBizAt).toISOString() : null,
+      biz_count: bizCount,
       wake: { configured: !!WAKE_CMD, min_interval_s: WAKE_MIN, last_at: w.last_at || null, last_reason: w.reason || null } };
     if (up) {
       try {
@@ -159,9 +194,16 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(Object.assign({ ok: true, configured: !!WAKE_CMD }, r)));
   }
 
+  // ★ R1190：先判「这是不是真实业务请求」，再决定后面允不允许唤醒
+  const esc = wakeEligible(req, p);
+  const authYes = /^Bearer\s+\S{8,}/i.test(String(req.headers['authorization'] || ''));
+  if (LOG_REQ) log('req ' + req.method + ' ' + p + ' auth=' + (authYes ? 'yes' : 'no') +
+    ' biz=' + (esc.ok ? 'YES' : 'no(' + esc.why + ')') + ' ua=' + String(req.headers['user-agent'] || '').slice(0, 40));
+  if (esc.ok) { lastBizAt = Date.now(); bizCount++; }
+
   const up = upstream();
   if (!up) {
-    const w = maybeWake('no-upstream');
+    const w = maybeWake('no-upstream', false, esc);
     res.writeHead(503, { 'content-type': 'application/json' });
     return res.end(JSON.stringify({ ok: false, error: '上游未注册（自建机可能已关机/未上报）', wake: w }));
   }
@@ -179,7 +221,7 @@ const server = http.createServer(async (req, res) => {
     // ★ R1187 实测坑：cloudflared 隧道死了会返回 **520~530 的 HTML 错误页**（HTTP 层面是"成功响应"），
     //   旧逻辑把它当正常响应透传，导致「有人调用」根本触发不了唤醒。必须识别成上游不可用。
     if (r.status >= 520 && r.status <= 530) {
-      const w = maybeWake('upstream-tunnel-error-' + r.status);
+      const w = maybeWake('upstream-tunnel-error-' + r.status, false, esc);
       try { await r.text(); } catch (e) {}
       res.writeHead(503, { 'content-type': 'application/json' });
       return res.end(JSON.stringify({ ok: false, error: 'upstream tunnel error ' + r.status + '（自建机可能已关机/隧道已断）', upstream: up, wake: w }));
@@ -192,11 +234,11 @@ const server = http.createServer(async (req, res) => {
     if (!r.body) return res.end();
     Readable.fromWeb(r.body).pipe(res);
   } catch (e) {
-    const w = maybeWake('proxy-failed');
+    const w = maybeWake('proxy-failed', false, esc);
     res.writeHead(502, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: false, error: 'upstream unreachable: ' + e.message, upstream: up, wake: w }));
   }
 });
 
-server.listen(PORT, '127.0.0.1', () => log('h3-local-relay 启动 http://127.0.0.1:' + PORT + '  上游=' + (upstream() || '(未上报)') + '  selfKey=' + (SELF_KEY ? 'set' : 'EMPTY') + '  wake=' + (WAKE_CMD ? 'set(' + WAKE_MIN + 's)' : 'OFF')));
+server.listen(PORT, '127.0.0.1', () => log('h3-local-relay 启动 http://127.0.0.1:' + PORT + '  上游=' + (upstream() || '(未上报)') + '  selfKey=' + (SELF_KEY ? 'set' : 'EMPTY') + '  wake=' + (WAKE_CMD ? 'set(' + WAKE_MIN + 's)' : 'OFF') + '  唤醒判定=' + WAKE_METHODS.join('/') + (WAKE_REQUIRE_AUTH ? '+Bearer' : '') + ' 忽略=' + WAKE_DENY_PREFIX.join(',')));
 process.on('SIGTERM', () => process.exit(0));
