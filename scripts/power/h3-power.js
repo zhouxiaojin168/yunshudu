@@ -86,7 +86,13 @@ async function sense(cfg) {
 async function cycle(cfg) {
   const s = await sense(cfg);
   const idleMinS = Math.max(60, Number(cfg.idle_minutes) * 60);
-  const cooled = (nowSec() - ACT.last_at) >= Math.max(60, Number(cfg.cooldown_minutes) * 60);
+  // ★ R1190c：开机失败（例如 AutoDL 报『机器空闲GPU不足』）后按 wake_retry_minutes 快速重试，
+  //   否则一次失败要等满 20 分钟冷却，用户干等。成功动作仍按 cooldown_minutes 节流。
+  const retryMin = Math.max(1, Number(cfg.wake_retry_minutes || 5));
+  const lastTry = Math.max(Number(ACT.last_at || 0), Number(ACT.last_fail_at || 0));
+  const coolSec = (ACT.last_fail_at && ACT.last_ok === false)
+    ? retryMin * 60 : Math.max(60, Number(cfg.cooldown_minutes) * 60);
+  const cooled = (nowSec() - lastTry) >= coolSec;
   const line = 'sense: relay=' + (s.reachable ? 'ok' : 'DOWN') + ' 上游=' + (s.upstream_ok ? 'ok' : '不可达')
     + ' idle=' + s.use_idle_s + 's(阈值' + idleMinS + 's) req/biz=' + s.req_count + '/' + s.biz_count + ' 在算=' + s.busy
     + (s.why.length ? '  :: ' + s.why.join(' | ') : '');
@@ -103,12 +109,18 @@ async function cycle(cfg) {
   }
 
   // —— ② 有人在用但机器不在 -> 尝试开机
-  if (s.reachable && !s.upstream_ok && s.biz_seen && s.biz_idle_eff !== null && s.biz_idle_eff < 300) {
-    if (!cooled) { api.log(cfg, line + '  -> 需要开机但冷却中(' + Math.round(nowSec() - ACT.last_at) + 's)'); saveState(cfg); return; }
+  const wakeWindow = Math.max(300, Number(cfg.wake_window_sec || 1800));
+  if (s.reachable && !s.upstream_ok && s.biz_seen && s.biz_idle_eff !== null && s.biz_idle_eff < wakeWindow) {
+    if (!cooled) { api.log(cfg, line + '  -> 需要开机但冷却中(' + Math.round(nowSec() - lastTry) + 's/' + coolSec + 's)'); saveState(cfg); return; }
     api.log(cfg, line + '  -> ★ 有调用且上游不可达，尝试开机');
     if (!cfg.enabled) api.log(cfg, '   enabled=false -> 只记日志（不真开机）');
     else if (cfg.dry_run) api.log(cfg, '   dry_run=true -> 只记日志（不真开机）');
-    else { const r = await api.powerOn(cfg); ACT = { last_at: nowSec(), last_kind: 'on', last_ok: r.ok, idle_since: 0 }; saveState(cfg); return; }
+    else {
+      const r = await api.powerOn(cfg);
+      if (r.ok) { ACT = { last_at: nowSec(), last_kind: 'on', last_ok: true, idle_since: 0 }; }
+      else { ACT = Object.assign({}, ACT, { last_at: nowSec(), last_fail_at: nowSec(), last_kind: 'on(fail)', last_ok: false }); }
+      saveState(cfg); return;
+    }
     ACT.last_kind = 'on(dry)'; saveState(cfg); return;
   }
 
