@@ -64,6 +64,11 @@ async function sense(cfg) {
   out.biz_idle_s = (h.biz_idle_s === null || h.biz_idle_s === undefined) ? null : Number(h.biz_idle_s);
   out.biz_count = (h.biz_count === undefined || h.biz_count === null) ? null : Number(h.biz_count);
   out.use_idle_s = (out.biz_idle_s === null) ? out.idle_s : out.biz_idle_s;
+  // ★ R1190b：biz_count 为 0 =「从来没有过真实业务请求」-> 探活绝不能当成有人在用
+  //   （否则一次 GET /v1/models 就能把机器叫醒；biz_count === null 表示老版 relay，保持兼容）
+  out.biz_seen = (out.biz_count === null) ? true : (out.biz_count > 0);
+  // 老版 relay（没有 biz_idle_s 字段）-> 退回 idle_s，保持兼容；新版但从未有业务 -> null（绝不当成有人在用）
+  out.biz_idle_eff = (out.biz_idle_s !== null) ? out.biz_idle_s : (out.biz_count === null ? out.idle_s : null);
 
   if (!out.upstream_ok) {
     out.why.push('上游不可达(可能已关机) upstream_health=' + JSON.stringify(h.upstream_health));
@@ -98,7 +103,7 @@ async function cycle(cfg) {
   }
 
   // —— ② 有人在用但机器不在 -> 尝试开机
-  if (s.reachable && !s.upstream_ok && s.use_idle_s !== null && s.use_idle_s < 300) {
+  if (s.reachable && !s.upstream_ok && s.biz_seen && s.biz_idle_eff !== null && s.biz_idle_eff < 300) {
     if (!cooled) { api.log(cfg, line + '  -> 需要开机但冷却中(' + Math.round(nowSec() - ACT.last_at) + 's)'); saveState(cfg); return; }
     api.log(cfg, line + '  -> ★ 有调用且上游不可达，尝试开机');
     if (!cfg.enabled) api.log(cfg, '   enabled=false -> 只记日志（不真开机）');
@@ -138,6 +143,7 @@ async function selftest() {
     else if (mode === 'busy') body = { upstream_health: 200, idle_s: 2, req_count: 4, upstream_body: JSON.stringify({ queue: 1, comfy_queue: { running: 1, pending: 0 } }) };
     else if (mode === 'down-quiet') body = { upstream_health: 'ERR x', idle_s: 100000, biz_idle_s: 100000, req_count: 9, biz_count: 0, upstream_body: null };
     else if (mode === 'probe-only') body = { upstream_health: 'ERR x', idle_s: 5, biz_idle_s: 100000, req_count: 99, biz_count: 1, upstream_body: null };
+    else if (mode === 'never-biz') body = { upstream_health: 'ERR x', idle_s: 3, biz_idle_s: null, req_count: 99, biz_count: 0, upstream_body: null };
     else if (mode === 'biz-fresh') body = { upstream_health: 'ERR x', idle_s: 5, biz_idle_s: 4, req_count: 99, biz_count: 2, upstream_body: null };
     else body = { upstream_health: 'ERR x', idle_s: 5, req_count: 9, upstream_body: null };
     res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(body));
@@ -163,6 +169,8 @@ async function selftest() {
   await cycle(cfg); rec('g) 关机2天(未超上限)且无调用 -> 不动', ACT.last_kind === 'off');
   mode = 'probe-only'; ACT = { last_at: 0, last_kind: '', last_ok: null, idle_since: 0 };
   await cycle(cfg); rec('h) 只有探活(请求很新但业务很旧) -> 不唤醒', ACT.last_kind === '');
+  mode = 'never-biz'; ACT = { last_at: 0, last_kind: '', last_ok: null, idle_since: 0 };
+  await cycle(cfg); rec('h2) 从未有业务请求 + 探活刚打进来 -> 不唤醒', ACT.last_kind === '');
   mode = 'biz-fresh'; ACT = { last_at: 0, last_kind: '', last_ok: null, idle_since: 0 };
   await cycle(cfg); rec('i) 真实业务刚来 -> 走开机分支(dry)', String(ACT.last_kind).indexOf('on') === 0);
   const lg = fs.readFileSync(cfg.log_file, 'utf8');
